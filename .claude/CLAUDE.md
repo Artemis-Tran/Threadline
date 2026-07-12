@@ -19,7 +19,7 @@ before moving to the next one. Check with the user before jumping ahead,
 even if the next step seems obvious.
 
 Pipeline stages, in order:
-1. ✅ / 🚧 EPUB parsing → clean chapter text (`src/parse-epub.ts`)
+1. ✅ EPUB parsing → clean chapter text (`src/parse-epub.ts`)
 2. ⬜ Single-chapter test extraction (one API call, inspect raw output)
 3. ⬜ Full chunking + per-chunk extraction with running context
 4. ⬜ Entity merge/dedupe pass across chunks
@@ -47,7 +47,7 @@ sessions know where things actually stand.
   it possible to catch a bad parse before burning API budget on it.
 - The generated thread JSON file should be named `{bookname}-thread.json`
   (not "skin") to stay consistent with the project's naming.
-- Use the `verify-parsing` skill after running the parser or an
+- Use the `verify-parse-extract` skill after running the parser or an
   extraction pass, before trusting the output or building on top of it.
 - Cost awareness: LLM extraction calls cost real money per book (roughly
   $0.20–$2 per book depending on model choice — see project notes/chat
