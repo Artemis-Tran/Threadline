@@ -1,0 +1,22 @@
+{
+  "name": "threadline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generates a structured 'thread' JSON (characters, relationships, plot events) from an EPUB by chunking chapter text and extracting entities via the Claude API.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "extract": "node -e \"console.log('not implemented yet')\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "dotenv": "^16.4.5",
+    "epub2": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
