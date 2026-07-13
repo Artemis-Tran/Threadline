@@ -8,10 +8,10 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "parse": "tsx src/parse-epub.ts",
-    "extract": "node -e \"console.log('not implemented yet')\""
+    "extract": "tsx src/extract-chapter.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/sdk": "^0.111.0",
     "dotenv": "^16.4.5",
     "epub2": "^3.0.2"
   },
