@@ -20,7 +20,7 @@ even if the next step seems obvious.
 
 Pipeline stages, in order:
 1. ✅ EPUB parsing → clean chapter text (`src/parse-epub.ts`)
-2. ⬜ Single-chapter test extraction (one API call, inspect raw output)
+2. ✅ Single-chapter test extraction (one API call, inspect raw output) (`src/extract-chapter.ts`, verified on chapter 8)
 3. ⬜ Full chunking + per-chunk extraction with running context
 4. ⬜ Entity merge/dedupe pass across chunks
 5. ⬜ Reader UI to display a thread alongside book text
