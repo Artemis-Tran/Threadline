@@ -78,11 +78,15 @@ async function parseEpub(epubPath: string): Promise<ParsedBook> {
       continue;
     }
 
+    // epub2 flow items rarely carry titles; fall back to the chapter's first
+    // text line so downstream tools can show which book chapter an index is.
+    const firstLine = text.split("\n")[0].slice(0, 80);
+
     chapters.push({
       index: chapters.length,
       id: item.id,
       href: item.href ?? "",
-      title: item.title ?? null,
+      title: item.title ?? firstLine,
       wordCount: countWords(text),
       text,
     });
