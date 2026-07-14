@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "parse": "tsx src/parse-epub.ts",
-    "extract": "tsx src/extract-chapter.ts"
+    "extract": "tsx src/extract-chapter.ts",
+    "extract-book": "tsx src/extract-book.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

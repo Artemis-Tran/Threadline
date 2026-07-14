@@ -21,7 +21,12 @@ even if the next step seems obvious.
 Pipeline stages, in order:
 1. ✅ EPUB parsing → clean chapter text (`src/parse-epub.ts`)
 2. ✅ Single-chapter test extraction (one API call, inspect raw output) (`src/extract-chapter.ts`, verified on chapter 8)
-3. ⬜ Full chunking + per-chunk extraction with running context
+3. ✅ Full chunking + per-chunk extraction with running context
+   (`src/extract-book.ts`; verified on The Potter's Path — 47 chunks in
+   `output/{slug}-chunks/`. Character names in that first run were
+   repaired by a mechanical cleanup pass, marked `meta.postProcessed`
+   in each chunk; the roster-contamination bug that caused it is fixed
+   in the script, so future books won't need it.)
 4. ⬜ Entity merge/dedupe pass across chunks
 5. ⬜ Reader UI to display a thread alongside book text
 
