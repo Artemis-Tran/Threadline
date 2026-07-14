@@ -1,25 +1,7 @@
 import { EPub } from "epub2";
 import * as fs from "fs";
 import * as path from "path";
-
-interface ParsedChapter {
-  index: number;
-  id: string;
-  href: string;
-  title: string | null;
-  wordCount: number;
-  text: string;
-}
-
-interface ParsedBook {
-  sourceFile: string;
-  title: string | null;
-  creator: string | null;
-  language: string | null;
-  chapterCount: number;
-  wordCount: number;
-  chapters: ParsedChapter[];
-}
+import { ParsedBook, ParsedChapter, PARSED_SUFFIX } from "./types";
 
 const BLOCK_TAGS = /<\/(p|div|h[1-6]|li|blockquote|tr|section|article)\s*>/gi;
 const BREAK_TAGS = /<br\s*\/?>/gi;
@@ -113,7 +95,7 @@ function deriveOutputPath(epubPath: string): string {
     .replace(/^-+|-+$/g, "");
   const outputDir = path.resolve(__dirname, "..", "output");
   fs.mkdirSync(outputDir, { recursive: true });
-  return path.join(outputDir, `${slug}-parsed.json`);
+  return path.join(outputDir, `${slug}${PARSED_SUFFIX}`);
 }
 
 async function main() {

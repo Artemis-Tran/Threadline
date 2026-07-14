@@ -2,25 +2,7 @@ import "dotenv/config";
 import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as path from "path";
-
-interface ParsedChapter {
-  index: number;
-  id: string;
-  href: string;
-  title: string | null;
-  wordCount: number;
-  text: string;
-}
-
-interface ParsedBook {
-  sourceFile: string;
-  title: string | null;
-  creator: string | null;
-  language: string | null;
-  chapterCount: number;
-  wordCount: number;
-  chapters: ParsedChapter[];
-}
+import { ParsedBook, deriveSlug } from "./types";
 
 const MODEL = "claude-sonnet-5";
 const MAX_TOKENS = 16000;
@@ -84,10 +66,6 @@ function buildSystemPrompt(bookTitle: string | null): string {
     "Describe only what this chapter itself states or clearly shows. Do not speculate about events outside this chapter, and do not use outside knowledge of the book.",
     "Use the character's most complete name from the chapter as `name`, and list other forms they are called by in `aliases`.",
   ].join(" ");
-}
-
-function deriveSlug(parsedJsonPath: string): string {
-  return path.basename(parsedJsonPath).replace(/-parsed\.json$/, "");
 }
 
 async function main() {
