@@ -9,7 +9,8 @@
     "start": "tsx src/index.ts",
     "parse": "tsx src/parse-epub.ts",
     "extract": "tsx src/extract-chapter.ts",
-    "extract-book": "tsx src/extract-book.ts"
+    "extract-book": "tsx src/extract-book.ts",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
