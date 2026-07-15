@@ -10,6 +10,7 @@
     "parse": "tsx src/parse-epub.ts",
     "extract": "tsx src/extract-chapter.ts",
     "extract-book": "tsx src/extract-book.ts",
+    "merge-thread": "tsx src/merge-thread.ts",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {

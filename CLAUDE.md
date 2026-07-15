@@ -26,8 +26,47 @@ Pipeline stages, in order:
    `output/{slug}-chunks/`. Character names in that first run were
    repaired by a mechanical cleanup pass, marked `meta.postProcessed`
    in each chunk; the roster-contamination bug that caused it is fixed
-   in the script, so future books won't need it.)
-4. ⬜ Entity merge/dedupe pass across chunks
+   in the script, so future books won't need it.
+   A freeform, per-book "system" data extraction field was scoped in
+   `plans/system-data-schema-plan.md` but deferred — untouched for now.)
+4. ✅ Entity merge/dedupe pass across chunks
+   (`src/merge-thread.ts`; verified on The Potter's Path — writes
+   `output/{slug}-thread.json` from the 47 chunks in
+   `output/{slug}-chunks/`. Fixes `updateRoster`'s longest-string-wins
+   description bug with a recency-first merge, and adds progression-order
+   regression detection across chapters. Known limitation, confirmed
+   against this book: the original motivating example — chapter 50
+   (`idx050-extract.json`) indirectly revealing Davos Merrick is Green
+   tier ("She was Green tier just like him") — is *not* fixable by this
+   or any JSON-only merge. All 4 of his chunk appearances already agree
+   on "Yellow tier" in the extracted description; the correct fact was
+   never captured into structured JSON in the first place, so there's no
+   cross-chunk contradiction to detect. That's a stage-3
+   extraction-accuracy gap, not a merge bug — closing it would need an
+   LLM-assisted pass that re-reads raw chapter text, deferred as future
+   work since it costs real API money. The regression detector does work
+   for genuine cross-chunk disagreements, confirmed via a real false
+   positive it caught on this book: Lady Celeste's chapter 48 description
+   misattributes Elise's "Orange tier potential" to Celeste herself,
+   correctly flagged as a conflict — a known limitation of regex-only
+   detection with no subject attribution, not something to chase with ad
+   hoc regex tweaks.
+   The hardcoded `TIER_ORDER`/tier-only detection has been generalized
+   into a configurable-per-key progression-order engine — Tier is now
+   that engine's built-in default entry (`DEFAULT_PROGRESSION_ORDERS`),
+   not a separate special case; a book's own vocabulary (Level, Class
+   Rank, etc.) can be plugged in via `--progression-order <path>`. No
+   auto-inference from book text — a new key is only ever detected once a
+   human explicitly configures it. `extractTier`/`detectTierConflicts`/
+   `conflicts` keep their exact original names, signatures, and shapes for
+   backward compatibility; every other configured key's regressions land
+   in the new, separate `progressionRegressions` field instead. Verified:
+   all 123 tests pass (`npm test`), `tsc` is clean, and a dry-run against
+   the real `output/potters-path-1st-chunks/` fixture with no config
+   produces byte-identical `conflicts`/`conflictCount` to before this
+   change. See `plans/generalize-tier-detection-plan.md`. A freeform
+   stage-3 "progression" extraction field remains a separate, deferred
+   idea — see `plans/system-data-schema-plan.md`.)
 5. ⬜ Reader UI to display a thread alongside book text
 
 Mark stages as complete in this file as they're finished, so future

@@ -95,10 +95,130 @@ export interface Manifest {
   roster: RosterEntry[];
 }
 
+// --- Stage 4 (merge-thread.ts) output shapes ---
+
+export interface CharacterAppearance {
+  chapterIndex: number;
+  chapterTitle: string | null;
+  name: string;
+  aliases: string[];
+  description: string;
+  role: CharacterRole;
+}
+
+// Provisional, inferred solely from this book's "<Color> tier" phrasing — not
+// derived from any authoritative source. Exported as a named constant
+// specifically so it's trivial to override per-book later.
+export const TIER_ORDER = ["Red", "Orange", "Yellow", "Green"] as const;
+export type TierName = (typeof TIER_ORDER)[number];
+
+export interface TierConflict {
+  from: { chapterIndex: number; value: TierName };
+  to: { chapterIndex: number; value: TierName };
+}
+
+export interface FlattenedConflict extends TierConflict {
+  characterId: string;
+  characterName: string;
+}
+
+// A configurable, per-key analogue of TIER_ORDER: `descriptionPattern` is a
+// regex template with a `{value}` placeholder (e.g. "{value}\\s+tier\\b"),
+// substituted with `order.join("|")` to build the actual matcher. Tier's own
+// entry (DEFAULT_PROGRESSION_ORDERS in merge-thread.ts) reproduces today's
+// TIER_ORDER/TIER_REGEX behavior as data instead of hardcoded logic; any
+// other key comes from an explicit, human-supplied config file — never
+// inferred — so nothing is silently guessed at.
+export interface ProgressionOrder {
+  key: string;
+  order: string[];
+  descriptionPattern: string;
+}
+
+export interface ProgressionRegression {
+  key: string;
+  from: { chapterIndex: number; value: string };
+  to: { chapterIndex: number; value: string };
+}
+
+export interface FlattenedProgressionRegression extends ProgressionRegression {
+  characterId: string;
+  characterName: string;
+}
+
+export interface MergedCharacter {
+  id: string;
+  name: string;
+  aliases: string[];
+  description: string;
+  appearances: CharacterAppearance[];
+  firstAppearedChapterIndex: number;
+  lastAppearedChapterIndex: number;
+  conflicts: TierConflict[];
+  // Regressions for configured keys other than "Tier" — Tier's own
+  // regressions stay in `conflicts` for backward compatibility; see
+  // merge-thread.ts's detectTierConflicts/detectProgressionRegressions split.
+  progressionRegressions: ProgressionRegression[];
+}
+
+export interface RelationshipStatement {
+  chapterIndex: number;
+  chapterTitle: string | null;
+  fromId: string;
+  fromName: string;
+  toId: string;
+  toName: string;
+  type: string;
+  description: string;
+}
+
+export interface MergedRelationship {
+  id: string;
+  participantIds: [string, string];
+  current: RelationshipStatement;
+  history: RelationshipStatement[];
+}
+
+export interface MergedEvent {
+  chapterIndex: number;
+  chapterTitle: string | null;
+  summary: string;
+  significance: EventSignificance;
+  charactersInvolved: { id: string | null; name: string }[];
+}
+
+export interface ThreadMeta {
+  bookTitle: string | null;
+  slug: string;
+  sourceManifest: string;
+  generatedAt: string;
+  chapterCount: number;
+  characterCount: number;
+  relationshipCount: number;
+  eventCount: number;
+  conflictCount: number;
+  progressionRegressionCount: number;
+  warningCount: number;
+}
+
+export interface Thread {
+  meta: ThreadMeta;
+  characters: MergedCharacter[];
+  relationships: MergedRelationship[];
+  events: MergedEvent[];
+  conflicts: FlattenedConflict[];
+  progressionRegressions: FlattenedProgressionRegression[];
+  warnings: string[];
+}
+
 // Suffix parse-epub.ts appends to each book's parsed-JSON output; the extraction
 // scripts strip it back off to recover the slug. Shared so the two stay in
 // lockstep if the naming convention ever changes.
 export const PARSED_SUFFIX = "-parsed.json";
+
+// Suffix merge-thread.ts appends to the generated thread file, per the
+// project's {bookname}-thread.json naming convention.
+export const THREAD_SUFFIX = "-thread.json";
 
 export function deriveSlug(parsedJsonPath: string): string {
   const base = path.basename(parsedJsonPath);
