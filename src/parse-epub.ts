@@ -6,7 +6,7 @@ import { ParsedBook, ParsedChapter, PARSED_SUFFIX } from "./types";
 const BLOCK_TAGS = /<\/(p|div|h[1-6]|li|blockquote|tr|section|article)\s*>/gi;
 const BREAK_TAGS = /<br\s*\/?>/gi;
 
-function htmlToPlainText(html: string): string {
+export function htmlToPlainText(html: string): string {
   let text = html
     .replace(BREAK_TAGS, "\n")
     .replace(BLOCK_TAGS, "\n")
@@ -30,7 +30,7 @@ function htmlToPlainText(html: string): string {
     .join("\n\n");
 }
 
-function countWords(text: string): number {
+export function countWords(text: string): number {
   const words = text.split(/\s+/).filter((w) => w.length > 0);
   return words.length;
 }
@@ -87,7 +87,7 @@ async function parseEpub(epubPath: string): Promise<ParsedBook> {
   };
 }
 
-function deriveOutputPath(epubPath: string): string {
+export function deriveOutputPath(epubPath: string): string {
   const base = path.basename(epubPath, path.extname(epubPath));
   const slug = base
     .toLowerCase()
@@ -137,7 +137,11 @@ async function main() {
   console.log(firstChapterPreview);
 }
 
-main().catch((err) => {
-  console.error("Parsing failed:", err);
-  process.exitCode = 1;
-});
+// Only run the CLI when executed directly — the parsing helpers above are
+// also imported by the test suite, which must not trigger a real run.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Parsing failed:", err);
+    process.exitCode = 1;
+  });
+}

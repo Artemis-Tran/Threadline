@@ -9,15 +9,13 @@ import {
   ExtractedCharacter,
   Extraction,
   deriveSlug,
+  RosterEntry,
+  SkipReason,
+  ManifestChapterEntry,
+  CHARACTER_ROLES,
+  EVENT_SIGNIFICANCE,
 } from "./types";
-
-interface RosterEntry {
-  name: string;
-  aliases: string[];
-  description: string;
-  firstAppearedChapterIndex: number;
-  lastAppearedChapterIndex: number;
-}
+import { sanitizeName, sanitizeAliases, findIdentityMatch } from "./identity";
 
 interface Totals {
   inputTokens: number;
@@ -48,26 +46,6 @@ const OUTPUT_USD_PER_MTOK = 15;
 const ROSTER_DESCRIPTION_MAX_CHARS = 150;
 const ROSTER_MAX_ALIASES = 8;
 
-// Pronoun and possessive-relational aliases ("him", "his brother", "our son")
-// are contextual, not identifying, and chain unrelated characters together
-// when the roster matches on them.
-const GENERIC_ALIAS =
-  /^(he|she|him|her|his|hers|they|them|it|(his|her|our|their|my|its) .+)$/i;
-
-// A "the ..." alias is only an identity key when it's a distinctive, capitalized
-// epithet ("the Reaper", "the Mystic Potter"). A lowercase "the ..." is a shared
-// role/title ("the guard", "the captain", "the merchant") that many different
-// characters answer to, so it must not become a matchable alias — otherwise two
-// differently-named characters get fused in the roster via the shared title.
-function isGenericAlias(alias: string): boolean {
-  if (GENERIC_ALIAS.test(alias)) return true;
-  const the = alias.match(/^the\s+(\S+)/i);
-  return the !== null && /^[a-z]/.test(the[1]);
-}
-
-const ROLE_ENUM = ["pov", "major", "supporting", "minor", "mentioned"] as const;
-const SIGNIFICANCE_ENUM = ["major", "moderate", "minor"] as const;
-
 const EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
@@ -79,7 +57,7 @@ const EXTRACTION_SCHEMA = {
           name: { type: "string" },
           aliases: { type: "array", items: { type: "string" } },
           description: { type: "string" },
-          role: { type: "string", enum: ROLE_ENUM },
+          role: { type: "string", enum: CHARACTER_ROLES },
         },
         required: ["name", "aliases", "description", "role"],
         additionalProperties: false,
@@ -106,7 +84,7 @@ const EXTRACTION_SCHEMA = {
         properties: {
           summary: { type: "string" },
           characters_involved: { type: "array", items: { type: "string" } },
-          significance: { type: "string", enum: SIGNIFICANCE_ENUM },
+          significance: { type: "string", enum: EVENT_SIGNIFICANCE },
         },
         required: ["summary", "characters_involved", "significance"],
         additionalProperties: false,
@@ -117,7 +95,7 @@ const EXTRACTION_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function buildSystemPrompt(bookTitle: string | null, roster: RosterEntry[]): string {
+export function buildSystemPrompt(bookTitle: string | null, roster: RosterEntry[]): string {
   const parts = [
     `You are extracting structured story data from one chapter of the book "${bookTitle ?? "Unknown"}".`,
     "Extract the characters that appear in this chapter, the relationships between them, and the plot events that occur.",
@@ -143,34 +121,6 @@ function buildSystemPrompt(bookTitle: string | null, roster: RosterEntry[]): str
   return parts.join(" ");
 }
 
-// The model occasionally emits parenthetical disambiguation in names
-// ("Marcus (blacksmith's apprentice)"); ingesting that verbatim makes the
-// roster echo it back and compound across chapters. Strip it before the
-// roster ever sees it.
-function sanitizeName(raw: string): string {
-  const paren = raw.indexOf("(");
-  return (paren === -1 ? raw : raw.slice(0, paren)).trim();
-}
-
-function sanitizeAliases(name: string, rawAliases: string[]): string[] {
-  const seen = new Set([name.toLowerCase()]);
-  const aliases: string[] = [];
-  for (const raw of rawAliases) {
-    const alias = sanitizeName(raw);
-    if (
-      alias.length === 0 ||
-      alias.length > 40 ||
-      isGenericAlias(alias) ||
-      seen.has(alias.toLowerCase())
-    ) {
-      continue;
-    }
-    seen.add(alias.toLowerCase());
-    aliases.push(alias);
-  }
-  return aliases;
-}
-
 // Fold one chapter's characters into the running roster. This is a naming-hint
 // index used only to keep the model's later chapters consistent — it is NOT
 // authoritative identity resolution. A character is matched to an existing
@@ -184,16 +134,12 @@ function sanitizeAliases(name: string, rawAliases: string[]): string[] {
 // left for stage 4's dedupe pass, which has the full per-chapter chunk data
 // (descriptions, relationships, co-occurring characters) needed to tell them
 // apart. Over-merging a hint here is cheap; a fragmented roster is not.
-function updateRoster(roster: RosterEntry[], characters: ExtractedCharacter[], chapterIndex: number): void {
+export function updateRoster(roster: RosterEntry[], characters: ExtractedCharacter[], chapterIndex: number): void {
   for (const c of characters) {
     const name = sanitizeName(c.name);
     if (name.length === 0) continue;
     const aliases = sanitizeAliases(name, c.aliases);
-    const identifiers = new Set([name.toLowerCase(), ...aliases.map((a) => a.toLowerCase())]);
-
-    const target = roster.find(
-      (r) => identifiers.has(r.name.toLowerCase()) || r.aliases.some((a) => identifiers.has(a.toLowerCase()))
-    );
+    const target = findIdentityMatch({ name, aliases }, roster);
 
     if (target) {
       for (const alias of [name, ...aliases]) {
@@ -223,7 +169,7 @@ function updateRoster(roster: RosterEntry[], characters: ExtractedCharacter[], c
 // Load a checkpoint's characters with a clear error if the file is malformed,
 // truncated, or from an incompatible schema — rather than a bare TypeError
 // deep inside updateRoster that doesn't name the offending file.
-function readCheckpointCharacters(outPath: string): ExtractedCharacter[] {
+export function readCheckpointCharacters(outPath: string): ExtractedCharacter[] {
   let checkpoint: unknown;
   try {
     checkpoint = JSON.parse(fs.readFileSync(outPath, "utf-8"));
@@ -237,18 +183,18 @@ function readCheckpointCharacters(outPath: string): ExtractedCharacter[] {
   return characters as ExtractedCharacter[];
 }
 
-function indexFromCheckpoint(outPath: string): string {
+export function indexFromCheckpoint(outPath: string): string {
   const match = path.basename(outPath).match(/idx(\d+)-extract\.json/);
   return match ? String(Number(match[1])) : "<index>";
 }
 
 // Single source of truth for token → USD, rounded to cents, so the console
 // summary and the persisted manifest can never disagree.
-function costUsd(inputTokens: number, outputTokens: number): number {
+export function costUsd(inputTokens: number, outputTokens: number): number {
   return Math.round((inputTokens * INPUT_USD_PER_MTOK + outputTokens * OUTPUT_USD_PER_MTOK) / 1e4) / 100;
 }
 
-interface CliOptions {
+export interface CliOptions {
   parsedJsonPath: string;
   from: number | null;
   to: number | null;
@@ -267,7 +213,7 @@ function parseIndexList(value: string, flag: string): number[] {
   return value.split(",").map(Number);
 }
 
-function parseArgs(argv: string[]): CliOptions {
+export function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
     parsedJsonPath: "",
     from: null,
@@ -335,9 +281,7 @@ function parseArgs(argv: string[]): CliOptions {
 // thread entirely) or narrative. Narrative chapters always contribute to the
 // roster and manifest; the selection flags only decide which of them get a
 // (paid) API call this run vs. load from an existing checkpoint.
-type SkipReason = "word-count" | "title";
-
-interface ChapterPlan {
+export interface ChapterPlan {
   chapter: ParsedChapter;
   narrative: boolean;
   skipReason: SkipReason | null;
@@ -345,11 +289,11 @@ interface ChapterPlan {
   willExtract: boolean;
 }
 
-function checkpointPath(chunksDir: string, index: number): string {
+export function checkpointPath(chunksDir: string, index: number): string {
   return path.join(chunksDir, `idx${String(index).padStart(3, "0")}-extract.json`);
 }
 
-function planChapters(book: ParsedBook, opts: CliOptions, chunksDir: string): ChapterPlan[] {
+export function planChapters(book: ParsedBook, opts: CliOptions, chunksDir: string): ChapterPlan[] {
   return book.chapters.map((chapter) => {
     let skipReason: SkipReason | null = null;
     if (chapter.wordCount < MIN_NARRATIVE_WORDS) skipReason = "word-count";
@@ -374,7 +318,7 @@ function planChapters(book: ParsedBook, opts: CliOptions, chunksDir: string): Ch
   });
 }
 
-function estimateCostUsd(plans: ChapterPlan[]): number {
+export function estimateCostUsd(plans: ChapterPlan[]): number {
   const toExtract = plans.filter((p) => p.willExtract);
   const inputTokens = toExtract.reduce(
     (sum, p) => sum + p.chapter.wordCount * EST_TOKENS_PER_WORD + EST_PROMPT_OVERHEAD_TOKENS,
@@ -384,7 +328,7 @@ function estimateCostUsd(plans: ChapterPlan[]): number {
   return (inputTokens * INPUT_USD_PER_MTOK + outputTokens * OUTPUT_USD_PER_MTOK) / 1e6;
 }
 
-function planStatus(p: ChapterPlan): string {
+export function planStatus(p: ChapterPlan): string {
   if (!p.narrative) return `skip:${p.skipReason}`;
   if (p.willExtract) return "extract";
   if (p.hasCheckpoint) return "cached";
@@ -412,14 +356,6 @@ async function confirm(question: string): Promise<boolean> {
   const answer = await new Promise<string>((resolve) => rl.question(question, resolve));
   rl.close();
   return answer.trim().toLowerCase() === "y";
-}
-
-interface ManifestChapterEntry {
-  index: number;
-  title: string | null;
-  wordCount: number;
-  status: "extracted" | "from-cache" | "pending" | `skipped:${SkipReason}`;
-  file?: string;
 }
 
 const MANIFEST_FILE = "manifest.json";
@@ -672,12 +608,16 @@ async function main() {
   console.log(`Manifest:        ${manifestPath}`);
 }
 
-main().catch((err) => {
-  if (err instanceof Anthropic.APIError) {
-    console.error(`API error ${err.status}: ${err.message}`);
-  } else {
-    console.error(`Extraction failed: ${err instanceof Error ? err.message : err}`);
-  }
-  console.error("Any checkpoints already written are preserved; rerun to resume.");
-  process.exitCode = 1;
-});
+// Only run the CLI when executed directly — the planning/roster helpers above
+// are also imported by the test suite, which must not trigger a real run.
+if (require.main === module) {
+  main().catch((err) => {
+    if (err instanceof Anthropic.APIError) {
+      console.error(`API error ${err.status}: ${err.message}`);
+    } else {
+      console.error(`Extraction failed: ${err instanceof Error ? err.message : err}`);
+    }
+    console.error("Any checkpoints already written are preserved; rerun to resume.");
+    process.exitCode = 1;
+  });
+}

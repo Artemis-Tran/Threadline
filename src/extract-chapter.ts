@@ -59,7 +59,7 @@ const EXTRACTION_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function buildSystemPrompt(bookTitle: string | null): string {
+export function buildSystemPrompt(bookTitle: string | null): string {
   return [
     `You are extracting structured story data from one chapter of the book "${bookTitle ?? "Unknown"}".`,
     "Extract the characters that appear in this chapter, the relationships between them, and the plot events that occur.",
@@ -191,11 +191,15 @@ async function main() {
   console.log(`Output written: ${outputPath}`);
 }
 
-main().catch((err) => {
-  if (err instanceof Anthropic.APIError) {
-    console.error(`API error ${err.status}: ${err.message}`);
-  } else {
-    console.error("Extraction failed:", err);
-  }
-  process.exitCode = 1;
-});
+// Only run the CLI when executed directly — buildSystemPrompt is also
+// imported by the test suite, which must not trigger a real run.
+if (require.main === module) {
+  main().catch((err) => {
+    if (err instanceof Anthropic.APIError) {
+      console.error(`API error ${err.status}: ${err.message}`);
+    } else {
+      console.error("Extraction failed:", err);
+    }
+    process.exitCode = 1;
+  });
+}

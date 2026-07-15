@@ -24,17 +24,75 @@ export interface ParsedBook {
   chapters: ParsedChapter[];
 }
 
+export const CHARACTER_ROLES = ["pov", "major", "supporting", "minor", "mentioned"] as const;
+export type CharacterRole = (typeof CHARACTER_ROLES)[number];
+
+export const EVENT_SIGNIFICANCE = ["major", "moderate", "minor"] as const;
+export type EventSignificance = (typeof EVENT_SIGNIFICANCE)[number];
+
 export interface ExtractedCharacter {
   name: string;
   aliases: string[];
   description: string;
-  role: string;
+  role: CharacterRole;
+}
+
+export interface ExtractedRelationship {
+  from: string;
+  to: string;
+  type: string;
+  description: string;
+}
+
+export interface ExtractedEvent {
+  summary: string;
+  characters_involved: string[];
+  significance: EventSignificance;
 }
 
 export interface Extraction {
   characters: ExtractedCharacter[];
-  relationships: unknown[];
-  events: unknown[];
+  relationships: ExtractedRelationship[];
+  events: ExtractedEvent[];
+}
+
+// The stage-3 (extract-book.ts) hint roster, persisted in manifest.json. Not
+// authoritative — capped aliases, truncated descriptions, longest-string-wins
+// merge. Stage 4 (merge-thread.ts) rebuilds its own full history from the
+// chunk files directly rather than trusting this.
+export interface RosterEntry {
+  name: string;
+  aliases: string[];
+  description: string;
+  firstAppearedChapterIndex: number;
+  lastAppearedChapterIndex: number;
+}
+
+export type SkipReason = "word-count" | "title";
+
+export interface ManifestChapterEntry {
+  index: number;
+  title: string | null;
+  wordCount: number;
+  status: "extracted" | "from-cache" | "pending" | `skipped:${SkipReason}`;
+  file?: string;
+}
+
+export interface Manifest {
+  meta: {
+    model: string;
+    parsedJsonPath: string;
+    bookTitle: string | null;
+    timestamp: string;
+    complete: boolean;
+    apiCalls: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    actualCostUsd: number;
+    rosterSize: number;
+  };
+  chapters: ManifestChapterEntry[];
+  roster: RosterEntry[];
 }
 
 // Suffix parse-epub.ts appends to each book's parsed-JSON output; the extraction
