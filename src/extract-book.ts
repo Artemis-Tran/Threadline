@@ -481,11 +481,10 @@ async function processChapters(
     }
 
     const outPath = checkpointPath(chunksDir, chapter.index);
-    const doExtract = client !== null && plan.willExtract;
 
-    if (doExtract) {
+    if (client !== null && plan.willExtract) {
       console.log(`[${chapter.index}] extracting (${chapter.wordCount} words, roster ${roster.length}): ${chapter.title ?? ""}`);
-      const { extraction, usage } = await extractChapter(client!, book, chapter, roster, outPath);
+      const { extraction, usage } = await extractChapter(client, book, chapter, roster, outPath);
       updateRoster(roster, extraction.characters, chapter.index);
       totals.inputTokens += usage.input_tokens;
       totals.outputTokens += usage.output_tokens;

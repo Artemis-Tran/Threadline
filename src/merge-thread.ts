@@ -212,8 +212,8 @@ export function detectProgressionRegressions(
 
 function toTierConflicts(regressions: ProgressionRegression[]): TierConflict[] {
   return regressions.map((r) => ({
-    from: { chapterIndex: r.from.chapterIndex, value: r.from.value as TierName },
-    to: { chapterIndex: r.to.chapterIndex, value: r.to.value as TierName },
+    from: { chapterIndex: r.from.chapterIndex, value: r.from.value },
+    to: { chapterIndex: r.to.chapterIndex, value: r.to.value },
   }));
 }
 

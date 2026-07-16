@@ -112,9 +112,12 @@ export interface CharacterAppearance {
 export const TIER_ORDER = ["Red", "Orange", "Yellow", "Green"] as const;
 export type TierName = (typeof TIER_ORDER)[number];
 
+// `value` is a string, not TierName: a --progression-order override of the
+// "Tier" key can put its own vocabulary here (e.g. Bronze/Silver/Gold), so
+// only the no-config default is guaranteed to stay within TIER_ORDER.
 export interface TierConflict {
-  from: { chapterIndex: number; value: TierName };
-  to: { chapterIndex: number; value: TierName };
+  from: { chapterIndex: number; value: string };
+  to: { chapterIndex: number; value: string };
 }
 
 export interface FlattenedConflict extends TierConflict {
