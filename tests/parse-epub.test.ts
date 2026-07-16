@@ -32,6 +32,29 @@ describe("htmlToPlainText", () => {
     assert.equal(htmlToPlainText("<p>caf&#233;</p>"), "café");
   });
 
+  test("decodes hex numeric entities", () => {
+    assert.equal(htmlToPlainText("<p>caf&#xE9; won&#x2019;t</p>"), "café won’t");
+  });
+
+  test("decodes astral code points via fromCodePoint", () => {
+    assert.equal(htmlToPlainText("<p>&#128512;</p>"), "😀");
+  });
+
+  test("decodes typographic named entities common in EPUBs", () => {
+    assert.equal(
+      htmlToPlainText("<p>&lsquo;a&rsquo; &ldquo;b&rdquo; c&hellip;</p>"),
+      "‘a’ “b” c…"
+    );
+  });
+
+  test("does not double-decode &amp;lt;", () => {
+    assert.equal(htmlToPlainText("<p>&amp;lt; stays literal</p>"), "&lt; stays literal");
+  });
+
+  test("leaves out-of-range numeric entities untouched instead of throwing", () => {
+    assert.equal(htmlToPlainText("<p>&#1114112;</p>"), "&#1114112;");
+  });
+
   test("collapses runs of spaces and tabs within lines", () => {
     assert.equal(htmlToPlainText("<p>too     many\t\ttabs</p>"), "too many tabs");
   });

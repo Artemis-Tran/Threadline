@@ -12,16 +12,28 @@ export function htmlToPlainText(html: string): string {
     .replace(BLOCK_TAGS, "\n")
     .replace(/<[^>]+>/g, "");
 
+  // &amp; must decode LAST: source text like "&amp;lt;" means a literal
+  // "&lt;" on the page, and decoding &amp; first would double-decode it to "<".
   text = text
     .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lsquo;/gi, "‘")
+    .replace(/&rsquo;/gi, "’")
+    .replace(/&ldquo;/gi, "“")
+    .replace(/&rdquo;/gi, "”")
+    .replace(/&hellip;/gi, "…")
     .replace(/&mdash;/gi, "—")
     .replace(/&ndash;/gi, "–")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+    .replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (match, hex, dec) => {
+      // fromCodePoint (not fromCharCode) so astral-plane characters survive;
+      // out-of-range values are left as-is rather than throwing mid-parse.
+      const code = hex !== undefined ? parseInt(hex, 16) : Number(dec);
+      return code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    })
+    .replace(/&amp;/gi, "&");
 
   return text
     .split("\n")
@@ -94,7 +106,6 @@ export function deriveOutputPath(epubPath: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   const outputDir = path.resolve(__dirname, "..", "output");
-  fs.mkdirSync(outputDir, { recursive: true });
   return path.join(outputDir, `${slug}${PARSED_SUFFIX}`);
 }
 
@@ -121,6 +132,7 @@ async function main() {
   }
 
   const outputPath = deriveOutputPath(epubPath);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, JSON.stringify(book, null, 2), "utf-8");
 
   const firstChapterPreview = book.chapters[0].text.slice(0, 200);
