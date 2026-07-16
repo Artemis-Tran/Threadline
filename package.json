@@ -4,6 +4,9 @@
   "private": true,
   "description": "Generates a structured 'thread' JSON (characters, relationships, plot events) from an EPUB by chunking chapter text and extracting entities via the Claude API.",
   "type": "commonjs",
+  "workspaces": [
+    "web"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "tsx src/index.ts",
@@ -11,7 +14,9 @@
     "extract": "tsx src/extract-chapter.ts",
     "extract-book": "tsx src/extract-book.ts",
     "merge-thread": "tsx src/merge-thread.ts",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "web": "npm run dev -w web",
+    "test:web": "npm run test -w web"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
@@ -22,5 +27,10 @@
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "esbuild@0.28.1": true,
+    "sharp@0.34.5": true
   }
 }
