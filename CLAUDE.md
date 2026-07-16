@@ -91,8 +91,6 @@ sessions know where things actually stand.
   it possible to catch a bad parse before burning API budget on it.
 - The generated thread JSON file should be named `{bookname}-thread.json`
   (not "skin") to stay consistent with the project's naming.
-- Use the `verify-parse-extract` skill after running the parser or an
-  extraction pass, before trusting the output or building on top of it.
 - Cost awareness: LLM extraction calls cost real money per book (roughly
   $0.20–$2 per book depending on model choice — see project notes/chat
   history for the breakdown). Prefer testing extraction logic on a single

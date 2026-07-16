@@ -3,5 +3,8 @@ dist/
 .env
 /input
 /output
+# Local working artifacts, not part of the repo: Claude state/skills,
+# planning notes, and generated docs/reports.
 .claude
 plans
+docs
