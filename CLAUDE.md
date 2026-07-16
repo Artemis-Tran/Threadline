@@ -8,15 +8,16 @@ then sending chunks to the Claude API to extract structured entities.
 
 The gist is to precompute these "threads" offline and match them to books a
 user uploads, rather than running extraction live on arbitrary uploads.
-We're building the offline extraction pipeline first — a live reader UI
-is a later, separate concern.
+The offline extraction pipeline (stages 1–4) is complete; stage 5 is a
+dedicated local web app (`web/`) that stores thread + parsed JSONs in
+SQLite and displays them.
 
 ## Current stage
-We are early: parsing + verification. **Do not build the LLM extraction
-step, chunking logic, entity merging, or any reader UI until explicitly
-asked.** Each pipeline stage is being built and validated independently
-before moving to the next one. Check with the user before jumping ahead,
-even if the next step seems obvious.
+The extraction pipeline (stages 1–4) is done. Stage 5 (web reader) is in
+progress, split into 5a/5b — see `plans/stage5-web-reader-plan.md` for
+the approved plan. Each stage is built and validated independently before
+moving to the next one. Check with the user before jumping ahead, even if
+the next step seems obvious.
 
 Pipeline stages, in order:
 1. ✅ EPUB parsing → clean chapter text (`src/parse-epub.ts`)
@@ -67,7 +68,22 @@ Pipeline stages, in order:
    change. See `plans/generalize-tier-detection-plan.md`. A freeform
    stage-3 "progression" extraction field remains a separate, deferred
    idea — see `plans/system-data-schema-plan.md`.)
-5. ⬜ Reader UI to display a thread alongside book text
+5. Web reader app (`web/` npm workspace: Next.js App Router + SQLite via
+   better-sqlite3; plan in `plans/stage5-web-reader-plan.md`):
+   - 5a. ✅ Workspace scaffold + SQLite data layer + upload/import UI +
+     book list. Threads and parsed books are imported by uploading the
+     two pipeline JSONs at `/upload` (validated against each other —
+     mismatched pairs and wrong-slot files get a 400 with a specific
+     message); books table stores the thread verbatim as a JSON blob plus
+     denormalized counts, chapters are normalized so the reader fetches
+     one chapter's text at a time. DB file: `web/data/threadline.db`
+     (gitignored). Verified: 15 web tests (`npm run test:web`), root
+     tests/tsc untouched and green, `npm run build -w web` clean, real
+     Potter's Path import/re-import/wrong-file all behave correctly.
+   - 5b. ⬜ Reader view: chapter text alongside a spoiler-gated thread
+     panel (Characters tab with per-character relationship drill-in — no
+     separate relationships tab — plus a Timeline tab), reading position
+     from the URL chapter segment mirrored to localStorage.
 
 Mark stages as complete in this file as they're finished, so future
 sessions know where things actually stand.
@@ -77,12 +93,25 @@ sessions know where things actually stand.
 - EPUB parsing library (see package.json for the one actually chosen)
 - `@anthropic-ai/sdk` for extraction calls
 - `dotenv` for API key management (`.env`, never committed)
+- Web app (`web/` only): Next.js (App Router) + better-sqlite3. Plain CSS
+  modules, no Tailwind/ORM.
 
 ## Project structure
-- `/src` — all source code
+- `/src` — extraction pipeline source (pure CLI; no web/DB deps)
+- `/web` — the stage-5 web reader (npm workspace; `npm run web` from root)
 - `/input` — sample EPUB files (gitignored, not committed)
 - `/output` — generated JSON (chapter text, skins) (gitignored, not committed)
+- `web/data/threadline.db` — the web app's SQLite file (gitignored)
 - `.env` — `ANTHROPIC_API_KEY` (gitignored, never committed)
+
+## Web/pipeline boundary
+- `web/` may only `import type { ... } from "@pipeline/types"` (a tsconfig
+  path alias to `../src/types.ts`) — **never value imports** from `src/`.
+  Type-only imports are erased at compile time; a value import would drag
+  the pipeline's node16-CJS code into Next's bundle graph and fail
+  confusingly. Web-side runtime constants (role/significance orderings)
+  are redeclared in `web/src/lib/constants.ts` on purpose.
+- The pipeline never imports from `web/`.
 
 ## Conventions
 - Every pipeline stage writes its output to `/output` as inspectable JSON
@@ -103,9 +132,11 @@ sessions know where things actually stand.
 ## Guardrails for Claude Code sessions
 - Scope each session to one pipeline stage at a time (use `/goal` to hold
   the session to that scope).
-- Don't add authentication, a database, a web server, or a UI framework
-  unless a stage explicitly calls for it — this is a local CLI pipeline
-  for now.
+- Stage 5 explicitly sanctions a local Next.js app + SQLite **inside
+  `web/` only**. The `src/` pipeline stays a pure CLI with no web or DB
+  dependencies. Still off-limits everywhere: authentication, deployment,
+  multi-user features, EPUB upload into the web app, and LLM calls from
+  the web app.
 - Don't call the Anthropic API in bulk (e.g. looping over many chapters
   or many books) without confirming with the user first — that's the
   point at which real money gets spent.
