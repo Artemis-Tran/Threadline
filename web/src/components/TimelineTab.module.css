@@ -1,0 +1,130 @@
+.empty {
+  color: var(--ink-soft);
+  font-style: italic;
+  padding: 2rem 0;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.chapter {
+  display: grid;
+  grid-template-columns: minmax(6rem, 9rem) 1fr;
+  gap: 1rem;
+}
+
+.chapterHead {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  height: fit-content;
+}
+
+.chapterNum {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.chapterTitle {
+  display: block;
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+  margin-top: 0.15rem;
+  line-height: 1.25;
+}
+
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 1rem;
+  border-left: 2px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.event {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  margin-top: 0.28rem;
+  margin-left: -1.42rem;
+  background: var(--bg);
+  box-shadow: 0 0 0 3px var(--bg);
+  flex-shrink: 0;
+}
+
+.major {
+  background: var(--major);
+}
+
+.moderate {
+  background: var(--moderate);
+}
+
+.minor {
+  background: var(--bg);
+  border: 1.5px solid var(--ink-soft);
+}
+
+.body {
+  min-width: 0;
+}
+
+.summary {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.chip,
+.chipPlain {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+}
+
+.chip {
+  cursor: pointer;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.chip:hover {
+  filter: brightness(0.96);
+  text-decoration: underline;
+}
+
+.chipPlain {
+  color: var(--ink-soft);
+  background: var(--bg-raised);
+}
