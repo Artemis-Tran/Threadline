@@ -1,12 +1,18 @@
-// Stage 5-A placeholder shell. The HashRouter + Library/Book routes land in
-// Stage 5-B; this just proves the Vite scaffold renders.
+import { HashRouter, Routes, Route } from "react-router-dom";
+import LibraryPage from "./pages/LibraryPage";
+import BookPage from "./pages/BookPage";
+
+// HashRouter (not BrowserRouter): the app is hosted statically on GitHub Pages
+// under a project subpath, so hash routing keeps deep links working without a
+// server-side rewrite/404 fallback.
 export default function App() {
   return (
-    <main style={{ maxWidth: "40rem", margin: "12vh auto", padding: "0 1.5rem" }}>
-      <h1 style={{ fontFamily: "var(--serif)" }}>Threadline</h1>
-      <p style={{ color: "var(--ink-soft)" }}>
-        Static wiki scaffold is up. Library and book views are coming next.
-      </p>
-    </main>
+    <HashRouter>
+      <Routes>
+        <Route path="/" element={<LibraryPage />} />
+        <Route path="/book/:slug" element={<BookPage />} />
+        <Route path="*" element={<LibraryPage />} />
+      </Routes>
+    </HashRouter>
   );
 }

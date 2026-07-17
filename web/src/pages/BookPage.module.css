@@ -1,0 +1,66 @@
+.page {
+  max-width: 50rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  min-height: 100vh;
+}
+
+.crumb {
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+}
+
+.crumb a {
+  text-decoration: none;
+}
+
+.crumb a:hover {
+  text-decoration: underline;
+}
+
+.title {
+  font-family: var(--serif);
+  font-size: 2rem;
+  margin: 0 0 1.25rem;
+  letter-spacing: -0.01em;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.75rem;
+  margin: 0 0 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.stats div {
+  display: flex;
+  flex-direction: column;
+}
+
+.stats dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.stats dd {
+  margin: 0;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.placeholder {
+  color: var(--ink-soft);
+  font-style: italic;
+  background: var(--bg-raised);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+}
