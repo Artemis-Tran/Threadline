@@ -15,7 +15,3 @@ export const ROLE_LABELS: Record<CharacterRole, string> = {
 };
 
 export const SIGNIFICANCE_ORDER: readonly EventSignificance[] = ["major", "moderate", "minor"];
-
-export function readingPositionKey(slug: string): string {
-  return `threadline:pos:${slug}`;
-}

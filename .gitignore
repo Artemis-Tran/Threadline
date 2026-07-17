@@ -1,8 +1,5 @@
 node_modules/
 dist/
-web/data/
-web/.next/
-web/next-env.d.ts
 .env
 /input
 /output

@@ -1,10 +1,17 @@
-import type { ParsedBook, Thread } from "@pipeline/types";
+import type { Thread } from "@pipeline/types";
 
-// Hand-rolled assertion guards for the two upload payloads. The trust boundary
+// Hand-rolled assertion guard for the single upload payload. The trust boundary
 // is the user's own pipeline output, so the goal is catching the wrong file in
-// the wrong slot (or a mismatched book pair) with a specific message — not
-// adversarial input. Validation is complete: every element is checked, and
+// the thread slot (or a hand-edited/truncated file) with a specific message —
+// not adversarial input. Validation is complete: every element is checked, and
 // meta counts must agree with the arrays they describe.
+//
+// Thread-only: there is no parsed book to cross-check against, so chapter
+// indices are validated intrinsically — every referenced index must be a
+// non-negative integer. There is deliberately no upper-bound check:
+// `meta.chapterCount` is the extracted-chapter count (chunks.length), not a
+// chapter-index bound, so it can't serve as one. The wiki derives its chapter
+// range from the actual referenced indices instead (see asOf.ts).
 
 export class ValidationError extends Error {}
 
@@ -34,9 +41,11 @@ function int(x: unknown, path: string): number {
   return x;
 }
 
-function num(x: unknown, path: string): number {
-  if (typeof x !== "number" || Number.isNaN(x)) fail(path, "expected a number");
-  return x;
+// Every chapter index anywhere in the thread flows through here.
+function nonNegativeInt(x: unknown, path: string): number {
+  const n = int(x, path);
+  if (n < 0) fail(path, "expected a non-negative integer");
+  return n;
 }
 
 function arr(x: unknown, path: string): unknown[] {
@@ -48,36 +57,9 @@ function strArr(x: unknown, path: string): void {
   for (const [i, v] of arr(x, path).entries()) str(v, `${path}[${i}]`);
 }
 
-export function validateParsedBook(x: unknown): asserts x is ParsedBook {
-  if (!isObj(x)) fail("parsed file", "not a JSON object — is this a -parsed.json?");
-  if (!("chapters" in x)) fail("parsed file", "missing chapters — is this a -parsed.json?");
-  str(x.sourceFile, "parsed.sourceFile");
-  strOrNull(x.title, "parsed.title");
-  strOrNull(x.creator, "parsed.creator");
-  strOrNull(x.language, "parsed.language");
-  int(x.chapterCount, "parsed.chapterCount");
-  num(x.wordCount, "parsed.wordCount");
-  const chapters = arr(x.chapters, "parsed.chapters");
-  if (chapters.length === 0) fail("parsed.chapters", "empty — nothing to import");
-  const seen = new Set<number>();
-  for (const [i, c] of chapters.entries()) {
-    const p = `parsed.chapters[${i}]`;
-    if (!isObj(c)) fail(p, "expected an object");
-    const index = int(c.index, `${p}.index`);
-    if (index < 0) fail(`${p}.index`, "negative chapter index");
-    if (seen.has(index)) fail(`${p}.index`, `duplicate chapter index ${index}`);
-    seen.add(index);
-    str(c.id, `${p}.id`);
-    str(c.href, `${p}.href`);
-    strOrNull(c.title, `${p}.title`);
-    num(c.wordCount, `${p}.wordCount`);
-    str(c.text, `${p}.text`);
-  }
-}
-
 function validateConflictBound(b: unknown, path: string): void {
   if (!isObj(b)) fail(path, "expected an object");
-  int(b.chapterIndex, `${path}.chapterIndex`);
+  nonNegativeInt(b.chapterIndex, `${path}.chapterIndex`);
   str(b.value, `${path}.value`);
 }
 
@@ -101,7 +83,7 @@ function validateConflict(
 
 function validateStatement(s: unknown, path: string): number {
   if (!isObj(s)) fail(path, "expected an object");
-  const chapterIndex = int(s.chapterIndex, `${path}.chapterIndex`);
+  const chapterIndex = nonNegativeInt(s.chapterIndex, `${path}.chapterIndex`);
   strOrNull(s.chapterTitle, `${path}.chapterTitle`);
   str(s.fromId, `${path}.fromId`);
   str(s.fromName, `${path}.fromName`);
@@ -138,8 +120,8 @@ export function validateThread(x: unknown): asserts x is Thread {
     str(c.name, `${p}.name`);
     strArr(c.aliases, `${p}.aliases`);
     str(c.description, `${p}.description`);
-    int(c.firstAppearedChapterIndex, `${p}.firstAppearedChapterIndex`);
-    int(c.lastAppearedChapterIndex, `${p}.lastAppearedChapterIndex`);
+    nonNegativeInt(c.firstAppearedChapterIndex, `${p}.firstAppearedChapterIndex`);
+    nonNegativeInt(c.lastAppearedChapterIndex, `${p}.lastAppearedChapterIndex`);
     for (const [j, cf] of arr(c.conflicts, `${p}.conflicts`).entries()) {
       validateConflict(cf, `${p}.conflicts[${j}]`, { flattened: false, keyed: false });
     }
@@ -151,7 +133,7 @@ export function validateThread(x: unknown): asserts x is Thread {
     for (const [j, a] of appearances.entries()) {
       const q = `${p}.appearances[${j}]`;
       if (!isObj(a)) fail(q, "expected an object");
-      int(a.chapterIndex, `${q}.chapterIndex`);
+      nonNegativeInt(a.chapterIndex, `${q}.chapterIndex`);
       strOrNull(a.chapterTitle, `${q}.chapterTitle`);
       str(a.name, `${q}.name`);
       strArr(a.aliases, `${q}.aliases`);
@@ -180,7 +162,7 @@ export function validateThread(x: unknown): asserts x is Thread {
   for (const [i, e] of events.entries()) {
     const p = `thread.events[${i}]`;
     if (!isObj(e)) fail(p, "expected an object");
-    int(e.chapterIndex, `${p}.chapterIndex`);
+    nonNegativeInt(e.chapterIndex, `${p}.chapterIndex`);
     strOrNull(e.chapterTitle, `${p}.chapterTitle`);
     str(e.summary, `${p}.summary`);
     if (typeof e.significance !== "string" || !EVENT_SIGNIFICANCE.has(e.significance)) {
@@ -205,7 +187,7 @@ export function validateThread(x: unknown): asserts x is Thread {
   const warnings = arr(x.warnings, "thread.warnings");
   for (const [i, w] of warnings.entries()) str(w, `thread.warnings[${i}]`);
 
-  // Denormalized meta counts feed the book list; if they disagree with the
+  // Denormalized meta counts feed the library card; if they disagree with the
   // arrays, the file was hand-edited or truncated — refuse rather than guess.
   if (meta.characterCount !== characters.length) {
     fail("thread.meta.characterCount", `is ${meta.characterCount} but characters has ${characters.length}`);
@@ -227,52 +209,5 @@ export function validateThread(x: unknown): asserts x is Thread {
   }
   if (meta.warningCount !== warnings.length) {
     fail("thread.meta.warningCount", `is ${meta.warningCount} but warnings has ${warnings.length}`);
-  }
-}
-
-// Every chapterIndex the thread references anywhere must exist in the parsed
-// chapter set, and the two files must agree on the book title — together these
-// catch a thread uploaded with the wrong book's parsed file.
-export function crossCheck(parsed: ParsedBook, thread: Thread): void {
-  const parsedIndices = new Set(parsed.chapters.map((c) => c.index));
-  const check = (index: number, path: string) => {
-    if (!parsedIndices.has(index)) {
-      fail(path, `references chapterIndex ${index}, which does not exist in the parsed book — mismatched pair?`);
-    }
-  };
-  for (const [i, c] of thread.characters.entries()) {
-    check(c.firstAppearedChapterIndex, `thread.characters[${i}].firstAppearedChapterIndex`);
-    check(c.lastAppearedChapterIndex, `thread.characters[${i}].lastAppearedChapterIndex`);
-    for (const [j, a] of c.appearances.entries()) check(a.chapterIndex, `thread.characters[${i}].appearances[${j}]`);
-    for (const [j, cf] of c.conflicts.entries()) {
-      check(cf.from.chapterIndex, `thread.characters[${i}].conflicts[${j}].from`);
-      check(cf.to.chapterIndex, `thread.characters[${i}].conflicts[${j}].to`);
-    }
-    for (const [j, pr] of c.progressionRegressions.entries()) {
-      check(pr.from.chapterIndex, `thread.characters[${i}].progressionRegressions[${j}].from`);
-      check(pr.to.chapterIndex, `thread.characters[${i}].progressionRegressions[${j}].to`);
-    }
-  }
-  for (const [i, cf] of thread.conflicts.entries()) {
-    check(cf.from.chapterIndex, `thread.conflicts[${i}].from`);
-    check(cf.to.chapterIndex, `thread.conflicts[${i}].to`);
-  }
-  for (const [i, pr] of thread.progressionRegressions.entries()) {
-    check(pr.from.chapterIndex, `thread.progressionRegressions[${i}].from`);
-    check(pr.to.chapterIndex, `thread.progressionRegressions[${i}].to`);
-  }
-  for (const [i, r] of thread.relationships.entries()) {
-    check(r.current.chapterIndex, `thread.relationships[${i}].current`);
-    for (const [j, s] of r.history.entries()) check(s.chapterIndex, `thread.relationships[${i}].history[${j}]`);
-  }
-  for (const [i, e] of thread.events.entries()) check(e.chapterIndex, `thread.events[${i}]`);
-
-  const parsedTitle = parsed.title?.trim();
-  const threadTitle = thread.meta.bookTitle?.trim();
-  if (parsedTitle && threadTitle && parsedTitle !== threadTitle) {
-    fail(
-      "book title",
-      `parsed file says "${parsedTitle}" but thread says "${threadTitle}" — mismatched pair?`
-    );
   }
 }

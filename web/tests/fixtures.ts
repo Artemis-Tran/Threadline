@@ -1,24 +1,9 @@
-import type { MergedEvent, ParsedBook, RelationshipStatement, Thread } from "@pipeline/types";
+import type { MergedEvent, RelationshipStatement, Thread } from "@pipeline/types";
 
-// Minimal-but-valid fixtures for the web data layer tests. Deep-cloned on
-// every call so tests can mutate freely.
-
-export function makeParsedBook(overrides: Partial<ParsedBook> = {}): ParsedBook {
-  const base: ParsedBook = {
-    sourceFile: "input/test-book.epub",
-    title: "Test Book",
-    creator: "Test Author",
-    language: "en",
-    chapterCount: 3,
-    wordCount: 60,
-    chapters: [
-      { index: 0, id: "p0", href: "ch0.xhtml", title: "Front Matter", wordCount: 10, text: "Front matter text." },
-      { index: 1, id: "p1", href: "ch1.xhtml", title: "Chapter 1", wordCount: 25, text: "Chapter one text." },
-      { index: 2, id: "p2", href: "ch2.xhtml", title: "Chapter 2", wordCount: 25, text: "Chapter two text." },
-    ],
-  };
-  return { ...structuredClone(base), ...overrides };
-}
+// Minimal-but-valid thread fixture for the web data layer / selector tests.
+// Deep-cloned on every call so tests can mutate freely. Hen deliberately
+// appears as "Hen" at ch 1 and "Hen Ashworth" at ch 2 (with the top-level
+// whole-book name also "Hen Ashworth") so spoiler-gating can be asserted.
 
 function statement(chapterIndex: number, description: string): RelationshipStatement {
   return {

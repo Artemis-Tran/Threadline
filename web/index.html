@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Threadline</title>
+    <!--
+      file:// guard. Runs before the module bundle. On file:// two things break:
+      IndexedDB is unreliable (opaque origin) and a base-path build can't resolve
+      its own asset URLs, so React may never mount. Show a plain, dependency-free
+      message instead of a blank page.
+    -->
+    <script>
+      if (window.location.protocol === "file:") {
+        document.documentElement.innerHTML =
+          '<body style="font-family:system-ui,sans-serif;max-width:34rem;margin:15vh auto;padding:0 1.5rem;line-height:1.6;color:#2a271f">' +
+          "<h1>Serve Threadline from a URL</h1>" +
+          "<p>Threadline stores your library in the browser's IndexedDB, which doesn't work when a page is opened directly from disk (<code>file://</code>).</p>" +
+          "<p>Open it from GitHub Pages, or run a local server from the build output, e.g. <code>npx serve dist</code>.</p>" +
+          "</body>";
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

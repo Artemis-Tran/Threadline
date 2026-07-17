@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ValidationError, crossCheck, validateParsedBook, validateThread } from "../src/lib/validate";
-import { makeParsedBook, makeThread } from "./fixtures";
+import { ValidationError, validateThread } from "../src/lib/validate";
+import { makeThread } from "./fixtures";
 
 function expectFailure(fn: () => void, messagePart: string) {
   try {
@@ -17,30 +17,13 @@ function expectFailure(fn: () => void, messagePart: string) {
   assert.fail("expected validation to throw");
 }
 
-test("valid parsed book and thread pass validation and cross-check", () => {
-  const parsed = makeParsedBook();
-  const thread = makeThread();
-  validateParsedBook(parsed);
-  validateThread(thread);
-  crossCheck(parsed, thread);
+test("a valid thread passes validation", () => {
+  validateThread(makeThread());
 });
 
-test("parsed book without chapters is rejected with a slot hint", () => {
-  expectFailure(() => validateParsedBook({ sourceFile: "x" }), "-parsed.json");
-});
-
-test("thread uploaded into the parsed slot is rejected", () => {
-  expectFailure(() => validateParsedBook(makeThread() as unknown), "-parsed.json");
-});
-
-test("parsed book uploaded into the thread slot is rejected", () => {
-  expectFailure(() => validateThread(makeParsedBook() as unknown), "-thread.json");
-});
-
-test("duplicate parsed chapter indices are rejected", () => {
-  const parsed = makeParsedBook();
-  parsed.chapters[1] = { ...parsed.chapters[1], index: 0 };
-  expectFailure(() => validateParsedBook(parsed), "duplicate chapter index");
+test("a non-object is rejected with a slot hint", () => {
+  expectFailure(() => validateThread("nope" as unknown), "-thread.json");
+  expectFailure(() => validateThread({ characters: [] } as unknown), "-thread.json");
 });
 
 test("thread with empty meta.slug is rejected", () => {
@@ -55,6 +38,12 @@ test("thread meta counts must match array lengths", () => {
   expectFailure(() => validateThread(thread), "characterCount");
 });
 
+test("thread meta warningCount must match warnings length", () => {
+  const thread = makeThread();
+  thread.warnings = ["ch2: something unresolved"];
+  expectFailure(() => validateThread(thread), "warningCount");
+});
+
 test("invalid character role is rejected with its path", () => {
   const thread = makeThread() as unknown as { characters: { appearances: { role: string }[] }[] };
   thread.characters[0].appearances[0].role = "protagonist";
@@ -63,12 +52,6 @@ test("invalid character role is rejected with its path", () => {
 
 test("null event participant ids are allowed", () => {
   validateThread(makeThread());
-});
-
-test("thread meta warningCount must match warnings length", () => {
-  const thread = makeThread();
-  thread.warnings = ["ch2: something unresolved"];
-  expectFailure(() => validateThread(thread), "warningCount");
 });
 
 test("malformed conflict entries are rejected with their path", () => {
@@ -85,35 +68,48 @@ test("malformed conflict entries are rejected with their path", () => {
   expectFailure(() => validateThread(thread), "conflicts[0].to.value");
 });
 
-test("cross-check rejects conflicts referencing chapters the parsed book lacks", () => {
+// --- Non-negative index checks at every referenced site ---
+
+test("negative appearance chapterIndex is rejected", () => {
+  const thread = makeThread();
+  thread.characters[0].appearances[0].chapterIndex = -1;
+  expectFailure(() => validateThread(thread), "appearances[0].chapterIndex");
+});
+
+test("negative firstAppearedChapterIndex is rejected", () => {
+  const thread = makeThread();
+  thread.characters[0].firstAppearedChapterIndex = -1;
+  expectFailure(() => validateThread(thread), "firstAppearedChapterIndex");
+});
+
+test("negative event chapterIndex is rejected", () => {
+  const thread = makeThread();
+  thread.events[0].chapterIndex = -3;
+  expectFailure(() => validateThread(thread), "events[0].chapterIndex");
+});
+
+test("negative relationship statement chapterIndex is rejected", () => {
+  const thread = makeThread();
+  thread.relationships[0].history[0].chapterIndex = -1;
+  expectFailure(() => validateThread(thread), "history[0].chapterIndex");
+});
+
+test("negative flattened conflict bound chapterIndex is rejected", () => {
   const thread = makeThread();
   thread.meta.conflictCount = 1;
   thread.conflicts = [
     {
-      from: { chapterIndex: 1, value: "Red" },
-      to: { chapterIndex: 40, value: "Green" },
+      from: { chapterIndex: -1, value: "Red" },
+      to: { chapterIndex: 2, value: "Green" },
       characterId: "hen",
       characterName: "Hen",
     },
   ];
-  validateThread(thread);
-  expectFailure(() => crossCheck(makeParsedBook(), thread), "mismatched pair");
+  expectFailure(() => validateThread(thread), "conflicts[0].from.chapterIndex");
 });
 
-test("cross-check rejects a thread referencing chapters the parsed book lacks", () => {
-  const parsed = makeParsedBook();
+test("non-integer chapterIndex is rejected", () => {
   const thread = makeThread();
-  thread.events[0].chapterIndex = 40;
-  expectFailure(() => crossCheck(parsed, thread), "mismatched pair");
-});
-
-test("cross-check rejects differing book titles", () => {
-  const parsed = makeParsedBook({ title: "A Different Book" });
-  const thread = makeThread();
-  expectFailure(() => crossCheck(parsed, thread), "mismatched pair");
-});
-
-test("cross-check tolerates a null parsed title", () => {
-  const parsed = makeParsedBook({ title: null });
-  crossCheck(parsed, makeThread());
+  thread.events[0].chapterIndex = 1.5;
+  expectFailure(() => validateThread(thread), "events[0].chapterIndex");
 });
