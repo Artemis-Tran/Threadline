@@ -21,11 +21,12 @@ export default function CharactersTab({
         const inRole = characters.filter((c) => c.role === role);
         if (inRole.length === 0) return null;
         return (
-          <section key={role}>
-            <h3 className={styles.groupTitle}>
+          <details key={role} className={styles.group} open>
+            <summary className={styles.groupTitle}>
+              <span className={styles.chevron} aria-hidden />
               {ROLE_LABELS[role]}
               <span className={styles.groupCount}>{inRole.length}</span>
-            </h3>
+            </summary>
             <ul className={styles.cards}>
               {inRole.map((c) => (
                 <li key={c.id}>
@@ -46,7 +47,7 @@ export default function CharactersTab({
                 </li>
               ))}
             </ul>
-          </section>
+          </details>
         );
       })}
     </div>

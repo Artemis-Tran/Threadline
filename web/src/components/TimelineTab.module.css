@@ -4,6 +4,32 @@
   padding: 2rem 0;
 }
 
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0 0 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.legendCaption {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--ink);
+}
+
 .timeline {
   list-style: none;
   margin: 0;
@@ -14,20 +40,72 @@
 }
 
 .chapter {
-  display: grid;
-  grid-template-columns: minmax(6rem, 9rem) 1fr;
-  gap: 1rem;
+  display: block;
 }
 
+.disclosure {
+  display: grid;
+  grid-template-columns: minmax(6rem, 9rem) 1fr;
+  column-gap: 1rem;
+}
+
+/* Summary spans both columns and mirrors the outer tracks via subgrid, so the
+   label sits in the left rail and the collapsed preview in the right column. */
 .chapterHead {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: start;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  min-width: 0;
+}
+
+.chapterHead::-webkit-details-marker {
+  display: none;
+}
+
+.chapterHead:hover .chapterNum,
+.chapterHead:hover .chapterTitle {
+  color: var(--ink);
+}
+
+/* Left rail: the sticky chapter label. Stays pinned while events scroll. */
+.railLabel {
+  grid-column: 1;
   position: sticky;
   top: 1rem;
   align-self: start;
-  height: fit-content;
+  display: flex;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.chevron {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid var(--ink-soft);
+  border-bottom: 1.5px solid var(--ink-soft);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+  margin-top: 0.3rem;
+  flex-shrink: 0;
+}
+
+.disclosure[open] .chevron {
+  transform: rotate(45deg);
+}
+
+.labelStack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
 }
 
 .chapterNum {
-  display: block;
   font-family: var(--mono);
   font-size: 0.72rem;
   text-transform: uppercase;
@@ -37,15 +115,60 @@
 }
 
 .chapterTitle {
-  display: block;
   font-family: var(--serif);
   font-size: 0.95rem;
   color: var(--ink-soft);
-  margin-top: 0.15rem;
   line-height: 1.25;
 }
 
+.eventCount {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+/* Right column when collapsed: a glanceable row of significance dots. Hidden
+   when open, where the real events (below) occupy the same grid cell. */
+.preview {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  padding-top: 0.2rem;
+  min-width: 0;
+}
+
+.disclosure[open] .preview {
+  display: none;
+}
+
+/* Chromium wraps a <details>'s non-summary content in ::details-content, and
+   that box (not the <ul>) is the real grid item. Place it in the right column,
+   overlapping the now-hidden preview, so events sit beside the sticky rail.
+   Browsers without the pseudo fall back to the .events placement below. */
+.disclosure::details-content {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.previewDots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.previewDot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 .events {
+  grid-column: 2;
+  grid-row: 1;
   list-style: none;
   margin: 0;
   padding: 0 0 0 1rem;
