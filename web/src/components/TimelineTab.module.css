@@ -153,6 +153,14 @@
   min-width: 0;
 }
 
+/* When closed, the UA hides ::details-content with content-visibility, which
+   keeps the (empty) box in the grid — stretched over the right column, it sits
+   on top of the summary's dot preview and swallows clicks there. Remove it
+   from layout entirely so the whole summary row stays clickable. */
+.disclosure:not([open])::details-content {
+  display: none;
+}
+
 .previewDots {
   display: flex;
   flex-wrap: wrap;
