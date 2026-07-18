@@ -316,8 +316,8 @@ export default function BookPage() {
         )}
       </div>
 
-      {character ? (
-        detail ? (
+      {character &&
+        (detail ? (
           <CharacterDetail
             detail={detail}
             relationships={detailRels}
@@ -333,12 +333,16 @@ export default function BookPage() {
             </button>
             <p className={styles.muted}>This character hasn’t appeared yet as of {chapterLabel(cap)}.</p>
           </div>
-        )
-      ) : tab === "characters" ? (
+        ))}
+      {/* Both tabs stay mounted and are toggled with `hidden` so switching is a
+          pure display flip — remounting the big subtrees caused a visible
+          flicker, and this also preserves collapse state across switches. */}
+      <div hidden={character !== null || tab !== "characters"}>
         <CharactersTab characters={characters} onSelect={selectCharacter} chapterLabel={chapterLabel} />
-      ) : (
+      </div>
+      <div hidden={character !== null || tab !== "timeline"}>
         <TimelineTab events={events} onSelectCharacter={selectCharacter} chapterLabel={chapterLabel} />
-      )}
+      </div>
     </main>
   );
 }
