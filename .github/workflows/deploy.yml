@@ -1,0 +1,52 @@
+# Builds the web/ SPA and publishes it to GitHub Pages on every push to master.
+# The site is a static client-only app (no server), so this just uploads the
+# built web/dist/ folder as the Pages artifact.
+#
+# One-time setup in the repo: Settings -> Pages -> Build and deployment ->
+# Source: "GitHub Actions". (Without that, the deploy step has nowhere to publish.)
+name: Deploy web to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: # allow manual runs from the Actions tab
+
+# Least-privilege token: read the repo, write to Pages, and mint the OIDC token
+# the deploy step uses to authenticate.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it; queue at most one more.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # base path defaults to "/Threadline/" (the project-site subpath) via
+      # vite.config.ts; no env override needed here.
+      - run: npm run build -w web
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

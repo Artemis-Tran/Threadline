@@ -9,15 +9,20 @@ then sending chunks to the Claude API to extract structured entities.
 The gist is to precompute these "threads" offline and match them to books a
 user uploads, rather than running extraction live on arbitrary uploads.
 The offline extraction pipeline (stages 1–4) is complete; stage 5 is a
-dedicated local web app (`web/`) that stores thread + parsed JSONs in
-SQLite and displays them.
+static, client-only web app (`web/`) — a browsable "mini-wiki" that stores
+thread JSONs in the browser (IndexedDB) and displays them, hosted on
+GitHub Pages.
 
 ## Current stage
-The extraction pipeline (stages 1–4) is done. Stage 5 (web reader) is in
-progress, split into 5a/5b — see `plans/stage5-web-reader-plan.md` for
-the approved plan. Each stage is built and validated independently before
-moving to the next one. Check with the user before jumping ahead, even if
-the next step seems obvious.
+The extraction pipeline (stages 1–4) is done. Stage 5 pivoted from a
+Next.js + SQLite "web reader" to a **static, client-only wiki SPA**
+(Vite + React + IndexedDB) hosted on GitHub Pages — see
+`plans/stage5-static-wiki-plan.md`, which supersedes
+`plans/stage5-web-reader-plan.md`. It's split into 5-A (data/persistence
+core), 5-B (library shell), 5-C (wiki view), and 5-D (ship). Each stage is
+built, Codex-reviewed (`/review-git-diff`), and validated independently
+before moving on. Check with the user before jumping ahead, even if the
+next step seems obvious.
 
 Pipeline stages, in order:
 1. ✅ EPUB parsing → clean chapter text (`src/parse-epub.ts`)
@@ -68,22 +73,32 @@ Pipeline stages, in order:
    change. See `plans/generalize-tier-detection-plan.md`. A freeform
    stage-3 "progression" extraction field remains a separate, deferred
    idea — see `plans/system-data-schema-plan.md`.)
-5. Web reader app (`web/` npm workspace: Next.js App Router + SQLite via
-   better-sqlite3; plan in `plans/stage5-web-reader-plan.md`):
-   - 5a. ✅ Workspace scaffold + SQLite data layer + upload/import UI +
-     book list. Threads and parsed books are imported by uploading the
-     two pipeline JSONs at `/upload` (validated against each other —
-     mismatched pairs and wrong-slot files get a 400 with a specific
-     message); books table stores the thread verbatim as a JSON blob plus
-     denormalized counts, chapters are normalized so the reader fetches
-     one chapter's text at a time. DB file: `web/data/threadline.db`
-     (gitignored). Verified: 15 web tests (`npm run test:web`), root
-     tests/tsc untouched and green, `npm run build -w web` clean, real
-     Potter's Path import/re-import/wrong-file all behave correctly.
-   - 5b. ⬜ Reader view: chapter text alongside a spoiler-gated thread
-     panel (Characters tab with per-character relationship drill-in — no
-     separate relationships tab — plus a Timeline tab), reading position
-     from the URL chapter segment mirrored to localStorage.
+5. Static wiki SPA (`web/` npm workspace: Vite + React + IndexedDB via
+   `idb`; no server, no SQLite; plan in `plans/stage5-static-wiki-plan.md`,
+   which supersedes the old reader plan). A browsable "mini-wiki" for a
+   book: the centerpiece is a **chapter cap** ("world as of chapter N")
+   over spoiler-gated Characters (with per-character relationship drill-in)
+   and a Timeline — all recomputed from the thread's historical records
+   filtered to `chapterIndex <= cap` (never the whole-book top-level
+   fields). Thread-only: the parsed-book prose import was dropped. The
+   library and per-book UI state (last-opened book, chapter-cap position,
+   active tab) persist in the browser (IndexedDB), with a JSON export/
+   import for backup/portability. Deferred ideas are tracked in
+   `plans/deferred-ideas.md`.
+   - 5-A. ✅ Scaffold swap (Next+SQLite → Vite+React+idb), thread-only
+     validator, IndexedDB layer (library/prefs + versioned export/import),
+     pure spoiler-safe `asOf.ts` cap selectors. 45 web tests.
+   - 5-B. ✅ Library shell: HashRouter, drag-drop/file-picker thread
+     import, per-book delete, whole-library export/import.
+   - 5-C. ✅ Wiki view: chapter-cap slider, Characters/Timeline tabs,
+     search, per-character drill-in with relationship cross-links; cap/
+     tab/character synced to the URL and to per-book IndexedDB prefs.
+   - 5-D. ✅ Ship: GitHub Actions workflow (`.github/workflows/deploy.yml`)
+     builds `web/` and deploys to GitHub Pages on push to `master`. One
+     manual step remains outside the repo: enable Pages with Source =
+     "GitHub Actions" (Settings → Pages). Site URL:
+     `https://artemis-tran.github.io/Threadline/` (base path `/Threadline/`
+     in `vite.config.ts`, overridable via `THREADLINE_BASE`).
 
 Mark stages as complete in this file as they're finished, so future
 sessions know where things actually stand.
@@ -93,22 +108,25 @@ sessions know where things actually stand.
 - EPUB parsing library (see package.json for the one actually chosen)
 - `@anthropic-ai/sdk` for extraction calls
 - `dotenv` for API key management (`.env`, never committed)
-- Web app (`web/` only): Next.js (App Router) + better-sqlite3. Plain CSS
-  modules, no Tailwind/ORM.
+- Web app (`web/` only): Vite + React + react-router-dom (HashRouter),
+  persistence via IndexedDB (`idb`). Plain CSS modules, no Tailwind. No
+  server, no SQLite/ORM. Deployed as a static site to GitHub Pages.
 
 ## Project structure
 - `/src` — extraction pipeline source (pure CLI; no web/DB deps)
-- `/web` — the stage-5 web reader (npm workspace; `npm run web` from root)
+- `/web` — the stage-5 static wiki SPA (Vite; npm workspace; `npm run web`
+  from root for the dev server, `npm run build -w web` → `web/dist`)
+- `.github/workflows/deploy.yml` — builds `web/` and publishes it to
+  GitHub Pages on push to `master`
 - `/input` — sample EPUB files (gitignored, not committed)
 - `/output` — generated JSON (chapter text, skins) (gitignored, not committed)
-- `web/data/threadline.db` — the web app's SQLite file (gitignored)
 - `.env` — `ANTHROPIC_API_KEY` (gitignored, never committed)
 
 ## Web/pipeline boundary
 - `web/` may only `import type { ... } from "@pipeline/types"` (a tsconfig
   path alias to `../src/types.ts`) — **never value imports** from `src/`.
   Type-only imports are erased at compile time; a value import would drag
-  the pipeline's node16-CJS code into Next's bundle graph and fail
+  the pipeline's node16-CJS code into the web bundle graph and fail
   confusingly. Web-side runtime constants (role/significance orderings)
   are redeclared in `web/src/lib/constants.ts` on purpose.
 - The pipeline never imports from `web/`.
@@ -132,11 +150,13 @@ sessions know where things actually stand.
 ## Guardrails for Claude Code sessions
 - Scope each session to one pipeline stage at a time (use `/goal` to hold
   the session to that scope).
-- Stage 5 explicitly sanctions a local Next.js app + SQLite **inside
-  `web/` only**. The `src/` pipeline stays a pure CLI with no web or DB
-  dependencies. Still off-limits everywhere: authentication, deployment,
-  multi-user features, EPUB upload into the web app, and LLM calls from
-  the web app.
+- Stage 5 sanctions a **static Vite + React SPA with IndexedDB inside
+  `web/` only**, deployed as a **static site to GitHub Pages** (client-only
+  — the deploy just publishes prebuilt files; there is no server/backend).
+  The `src/` pipeline stays a pure CLI with no web or DB dependencies.
+  Still off-limits everywhere: authentication, **server/backend
+  deployment** (only static client hosting is allowed), multi-user
+  features, EPUB upload into the web app, and LLM calls from the web app.
 - Don't call the Anthropic API in bulk (e.g. looping over many chapters
   or many books) without confirming with the user first — that's the
   point at which real money gets spent.
