@@ -14,6 +14,7 @@
     "extract": "tsx src/extract-chapter.ts",
     "extract-book": "tsx src/extract-book.ts",
     "merge-thread": "tsx src/merge-thread.ts",
+    "book": "tsx src/run-book.ts",
     "test": "node --import tsx --test tests/*.test.ts",
     "web": "npm run dev -w web",
     "test:web": "npm run test -w web"
