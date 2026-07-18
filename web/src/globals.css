@@ -38,6 +38,14 @@
   box-sizing: border-box;
 }
 
+/* Always reserve space for the vertical scrollbar. Without this, switching
+   between tabs of different heights (e.g. Timeline → the taller Characters)
+   shows/hides the scrollbar, shifting the content width ~15px and reflowing
+   the whole page — a visible flicker on browsers with classic scrollbars. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   margin: 0;
   background: var(--bg);
