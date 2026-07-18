@@ -7,6 +7,7 @@ import {
   importBundle,
   listLibrary,
   putThread,
+  seedDefaultsOnce,
   type LibrarySummary,
 } from "../lib/db";
 import { downloadJson } from "../lib/download";
@@ -46,7 +47,9 @@ export default function LibraryPage() {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    // Seed the bundled example on first run, then load the library. Both the
+    // seed and the refresh already swallow their own errors.
+    void seedDefaultsOnce(import.meta.env.BASE_URL).then(refresh, refresh);
   }, [refresh]);
 
   // Serialize every library mutation: only one runs at a time (a second

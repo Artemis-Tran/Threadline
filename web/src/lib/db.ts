@@ -48,6 +48,13 @@ interface ThreadlineDB extends DBSchema {
 }
 
 const LAST_OPENED_KEY = "lastOpenedSlug";
+// Set once the bundled example thread has been offered to a fresh library.
+// Gating on this flag (not on library emptiness) means deleting the example is
+// permanent — it isn't re-seeded on the next visit.
+const SEEDED_DEFAULTS_KEY = "seededDefaults";
+// Bundled example thread, served as a static file from web/public. Fetched at
+// runtime (not imported) so its ~512K never lands in the JS bundle.
+const DEFAULT_THREAD_FILE = "potters-path-1st-thread.json";
 
 let dbPromise: Promise<IDBPDatabase<ThreadlineDB>> | null = null;
 
@@ -247,6 +254,28 @@ export async function setLastOpened(slug: string | null): Promise<void> {
     await db.delete("app", LAST_OPENED_KEY);
   } else {
     await db.put("app", { key: LAST_OPENED_KEY, value: slug });
+  }
+}
+
+// --- First-run defaults ---
+
+// Seed the bundled example thread into a fresh library, exactly once. The
+// `seededDefaults` flag is set whether or not the fetch succeeds, so a missing
+// or unreachable example never re-triggers on every load. A failure is
+// swallowed: the worst case is an empty library, not a scary error. Safe to
+// call on every mount — a no-op once the flag is set. `baseUrl` is
+// import.meta.env.BASE_URL so the fetch resolves under the GitHub Pages
+// subpath.
+export async function seedDefaultsOnce(baseUrl: string): Promise<void> {
+  const db = await getDb();
+  if ((await db.get("app", SEEDED_DEFAULTS_KEY)) !== undefined) return;
+  try {
+    const res = await fetch(`${baseUrl}${DEFAULT_THREAD_FILE}`);
+    if (res.ok) await putThread(await res.text());
+  } catch {
+    // network/parse failure — leave the library empty, still mark as seeded
+  } finally {
+    await db.put("app", { key: SEEDED_DEFAULTS_KEY, value: "1" });
   }
 }
 

@@ -12,6 +12,7 @@ import {
   parseBundle,
   putThread,
   resetDbForTests,
+  seedDefaultsOnce,
   setLastOpened,
   setPrefs,
 } from "../src/lib/db";
@@ -137,6 +138,68 @@ test("importBundle is atomic — a bad embedded thread aborts the whole import",
   await assert.rejects(() => importBundle(bundle), ValidationError);
   // Nothing written — the valid book must not sneak in.
   assert.deepEqual(await listLibrary(), []);
+});
+
+// A fetch stub that serves the example thread and counts how often it's hit,
+// so we can assert the seed runs at most once. `fail: true` simulates a
+// missing/unreachable example file.
+function stubFetch({ fail = false }: { fail?: boolean } = {}) {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    if (fail) throw new Error("network");
+    return { ok: true, text: async () => threadText() } as Response;
+  }) as typeof fetch;
+  return {
+    get calls() {
+      return calls;
+    },
+    restore() {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+test("seedDefaultsOnce seeds the example on a fresh library, exactly once", async () => {
+  const f = stubFetch();
+  try {
+    await seedDefaultsOnce("/base/");
+    assert.equal((await listLibrary()).length, 1);
+    assert.equal(f.calls, 1);
+
+    // Second call is a no-op — flag is set, no re-fetch.
+    await seedDefaultsOnce("/base/");
+    assert.equal((await listLibrary()).length, 1);
+    assert.equal(f.calls, 1);
+  } finally {
+    f.restore();
+  }
+});
+
+test("seedDefaultsOnce does not re-seed a deleted example", async () => {
+  const f = stubFetch();
+  try {
+    await seedDefaultsOnce("/base/");
+    await deleteThread("test-book");
+    await seedDefaultsOnce("/base/");
+    assert.deepEqual(await listLibrary(), []);
+    assert.equal(f.calls, 1); // still only the first fetch
+  } finally {
+    f.restore();
+  }
+});
+
+test("seedDefaultsOnce swallows a fetch failure but still marks as seeded", async () => {
+  const f = stubFetch({ fail: true });
+  try {
+    await seedDefaultsOnce("/base/");
+    assert.deepEqual(await listLibrary(), []); // no book, no throw
+    await seedDefaultsOnce("/base/");
+    assert.equal(f.calls, 1); // failure didn't leave it un-seeded
+  } finally {
+    f.restore();
+  }
 });
 
 test("parseBundle rejects a wrong version", () => {
