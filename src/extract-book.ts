@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
+import { performance } from "perf_hooks";
 import {
   ParsedBook,
   ParsedChapter,
@@ -452,10 +453,22 @@ async function extractChapter(
   };
   fs.writeFileSync(outPath, JSON.stringify(checkpoint, null, 2), "utf-8");
 
-  console.log(
-    `  characters: ${extraction.characters.length} | relationships: ${extraction.relationships.length} | events: ${extraction.events.length} | tokens: ${response.usage.input_tokens} in / ${response.usage.output_tokens} out`
-  );
+  // The caller (processChapters) owns per-chapter logging so it can render a
+  // single line carrying the progress ordinal, counts, tokens, and timing.
   return { extraction, usage: response.usage };
+}
+
+// "4.2s" for short spans, "1m 05s" once past a minute — used for both the
+// per-chapter elapsed time and the final run duration. Rounds to whole seconds
+// *before* splitting minutes/seconds so a value like 119.6s renders "2m 00s",
+// never "1m 60s".
+function formatDuration(ms: number): string {
+  const totalSec = ms / 1000;
+  if (Math.round(totalSec) < 60) return `${totalSec.toFixed(1)}s`;
+  const whole = Math.round(totalSec);
+  const m = Math.floor(whole / 60);
+  const s = whole % 60;
+  return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
 // Walk every chapter in book order, building the roster and manifest. Narrative
@@ -469,8 +482,11 @@ async function processChapters(
   client: Anthropic | null,
   roster: RosterEntry[],
   manifestChapters: ManifestChapterEntry[],
-  totals: Totals
+  totals: Totals,
+  toExtractCount: number
 ): Promise<void> {
+  let extractedSoFar = 0;
+
   for (const plan of plans) {
     const { chapter } = plan;
     const base = { index: chapter.index, title: chapter.title, wordCount: chapter.wordCount };
@@ -483,13 +499,31 @@ async function processChapters(
     const outPath = checkpointPath(chunksDir, chapter.index);
 
     if (client !== null && plan.willExtract) {
-      console.log(`[${chapter.index}] extracting (${chapter.wordCount} words, roster ${roster.length}): ${chapter.title ?? ""}`);
-      const { extraction, usage } = await extractChapter(client, book, chapter, roster, outPath);
+      const ordinal = `[${++extractedSoFar}/${toExtractCount}]`;
+      const label = `${ordinal} idx ${chapter.index} · ${chapter.title ?? ""}`;
+      // Print the prefix without a newline so the in-flight chapter is visible
+      // during the (multi-second) API call, then complete the same physical line
+      // with the results once it returns — one line per chapter, but still live.
+      process.stdout.write(`${label} — extracting (${chapter.wordCount} words, roster ${roster.length})… `);
+      const startedAt = performance.now();
+      let extraction: Extraction;
+      let usage: Anthropic.Usage;
+      try {
+        ({ extraction, usage } = await extractChapter(client, book, chapter, roster, outPath));
+      } catch (err) {
+        // The prefix above has no newline; terminate the dangling line so the
+        // failure message that follows isn't glued onto it.
+        process.stdout.write("\n");
+        throw err;
+      }
       updateRoster(roster, extraction.characters, chapter.index);
       totals.inputTokens += usage.input_tokens;
       totals.outputTokens += usage.output_tokens;
       totals.apiCalls += 1;
       manifestChapters.push({ ...base, status: "extracted", file: path.basename(outPath) });
+      console.log(
+        `done · ${extraction.characters.length} chars, ${extraction.relationships.length} rels, ${extraction.events.length} events · ${usage.input_tokens}/${usage.output_tokens} tok · ${formatDuration(performance.now() - startedAt)}`
+      );
     } else if (fs.existsSync(outPath)) {
       updateRoster(roster, readCheckpointCharacters(outPath), chapter.index);
       console.log(`[${chapter.index}] cached: ${chapter.title ?? ""}`);
@@ -542,7 +576,7 @@ async function main() {
     const roster: RosterEntry[] = [];
     const manifestChapters: ManifestChapterEntry[] = [];
     const totals: Totals = { inputTokens: 0, outputTokens: 0, apiCalls: 0 };
-    await processChapters(plans, chunksDir, book, null, roster, manifestChapters, totals);
+    await processChapters(plans, chunksDir, book, null, roster, manifestChapters, totals, 0);
     writeManifest(chunksDir, opts, book, manifestChapters, roster, totals, true);
     console.log(`Manifest rebuilt from ${manifestChapters.filter((c) => c.status === "from-cache").length} cached chunks — no API calls made.`);
     return;
@@ -582,8 +616,9 @@ async function main() {
   const manifestPath = path.join(chunksDir, MANIFEST_FILE);
   const partialPath = path.join(chunksDir, PARTIAL_MANIFEST_FILE);
 
+  const runStart = performance.now();
   try {
-    await processChapters(plans, chunksDir, book, client, roster, manifestChapters, totals);
+    await processChapters(plans, chunksDir, book, client, roster, manifestChapters, totals, toExtract.length);
   } catch (err) {
     // Persist progress to a side file rather than clobbering a possibly-complete
     // manifest.json with a truncated one; a rerun resumes from the checkpoints.
@@ -596,6 +631,8 @@ async function main() {
   // A prior partial run's leftover is now superseded by this complete manifest.
   if (fs.existsSync(partialPath)) fs.rmSync(partialPath);
 
+  console.log("");
+  console.log(`✓ Done — ${totals.apiCalls}/${toExtract.length} chapters extracted in ${formatDuration(performance.now() - runStart)}`);
   console.log("");
   console.log("Run summary");
   console.log("-----------");
