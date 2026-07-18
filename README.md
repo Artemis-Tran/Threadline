@@ -1,7 +1,8 @@
 # Threadline
 
 Inspired by me forgetting all the characters and events in the Wandering Inn
-after taking a break from reading.
+after taking a break from reading. Also me exploring the capabilities of agentic
+development.
 
 Threadline is a two-part prototype:
 
