@@ -22,11 +22,14 @@ import {
 import {
   sanitizeName,
   sanitizeAliases,
-  findIdentityMatch,
-  identityOverlaps,
   identifierSet,
+  collectNonIdentifyingKeys,
+  tokenize,
+  identifyingTokens,
   Identified,
 } from "./identity";
+
+const EMPTY_KEY_SET: ReadonlySet<string> = new Set();
 
 const MANIFEST_FILE = "manifest.json";
 
@@ -313,19 +316,52 @@ function absorb(target: MergedCharacter, source: MergedCharacter): void {
   );
 }
 
+// The matchable identifier set for a merged character. Every name the character
+// has appeared under is a PROTECTED identity key — always matchable, never
+// dropped even if the same string is a bridging alias on some unrelated record
+// (the "name is never demoted" invariant, extended to former names that name
+// promotion moved into `aliases`). Aliases are included unless flagged
+// non-identifying. Distinct from identity.ts's generic identifierSet because
+// only this merge pass carries per-character appearance history; the shared
+// name/alias normalization still lives in identity.ts so the two never drift.
+function characterIdentifierSet(
+  c: MergedCharacter,
+  nonIdentifying: ReadonlySet<string>
+): Set<string> {
+  const ids = new Set<string>([c.name.toLowerCase()]);
+  for (const a of c.appearances) ids.add(a.name.toLowerCase());
+  for (const alias of c.aliases) {
+    const key = alias.toLowerCase();
+    if (!nonIdentifying.has(key)) ids.add(key);
+  }
+  return ids;
+}
+
+function setsIntersect(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  for (const id of small) if (large.has(id)) return true;
+  return false;
+}
+
 // The greedy replay pass is order-sensitive: a character can be created under
 // one name ("Lord Brennan") before a later chunk's aliases establish that an
 // earlier entity already answers to it — leaving two records that share an
 // identifier ("Henry" and "Henry Ashford" both holding "Mystic Potter").
 // Merge to a fixed point so identifier sets end up pairwise disjoint; that
 // disjointness is also what makes the post-pass nameToId index unambiguous.
-export function unifyCharacters(characters: MergedCharacter[]): void {
+export function unifyCharacters(
+  characters: MergedCharacter[],
+  nonIdentifying: ReadonlySet<string> = EMPTY_KEY_SET
+): void {
   let changed = true;
   while (changed) {
     changed = false;
     for (let i = 0; i < characters.length; i++) {
       for (let j = i + 1; j < characters.length; ) {
-        if (identityOverlaps(characters[j], characters[i])) {
+        // Recomputed each iteration: absorb() below mutates characters[i], so a
+        // cached set would go stale and miss a transitively-linked merge.
+        const iIds = characterIdentifierSet(characters[i], nonIdentifying);
+        if (setsIntersect(characterIdentifierSet(characters[j], nonIdentifying), iIds)) {
           absorb(characters[i], characters[j]);
           characters.splice(j, 1);
           changed = true;
@@ -335,6 +371,104 @@ export function unifyCharacters(characters: MergedCharacter[]): void {
       }
     }
   }
+}
+
+interface NameVariant {
+  name: string;
+  count: number;
+  firstIndex: number;
+}
+
+// A "clean" proper-name form: every whitespace-separated word starts with an
+// uppercase letter or digit. This keeps canonical-name selection from upgrading
+// to a descriptive name-field ("Henry the struggling potter") — only real names
+// ("Henry Ashford") qualify as fuller forms.
+function isProperNameForm(name: string): boolean {
+  const words = name.trim().split(/\s+/).filter((w) => w.length > 0);
+  return words.length > 0 && words.every((w) => /^[\p{Lu}\p{N}]/u.test(w));
+}
+
+// Canonical name selection, in two moves:
+//   1. Anchor = the character's dominant name field (most frequent; ties by
+//      longest, then earliest). Frequency establishes identity and resists a
+//      rare contaminant hijacking the name.
+//   2. Upgrade the anchor to the FULLEST clean proper-name variant that extends
+//      it — i.e. contains all the anchor's identifying (non-honorific) tokens
+//      and adds more name parts — so "Henry" (46×) becomes "Henry Ashford" (1×),
+//      while "Tupoc Xical" (no fuller form) and "Lord Brennan" stay put. A
+//      token-disjoint variant ("Yaotl Cuatzo") can never extend the anchor, so
+//      it can't hijack even if it slipped into the same record.
+// Purely a display choice computed after all merging and matching are done, so
+// it never affects the established grouping or ids.
+export function pickCanonicalName(appearances: CharacterAppearance[]): string {
+  const counts = new Map<string, NameVariant>();
+  appearances.forEach((a, i) => {
+    // Key on the NFC-normalized, lowercased spelling so composed and decomposed
+    // Unicode forms of the same name aggregate into one variant (consistent with
+    // tokenize's NFC handling) rather than splitting its frequency.
+    const key = a.name.normalize("NFC").toLowerCase();
+    const existing = counts.get(key);
+    if (existing) {
+      existing.count++;
+      // Keep the best display spelling: upgrade to a proper-name form if the
+      // first-seen spelling wasn't one (e.g. an initial lowercase "henry").
+      if (!isProperNameForm(existing.name) && isProperNameForm(a.name)) existing.name = a.name;
+    } else {
+      counts.set(key, { name: a.name, count: 1, firstIndex: i });
+    }
+  });
+
+  const variants = [...counts.values()];
+  if (variants.length === 0) return "";
+
+  const moreFrequent = (a: NameVariant, b: NameVariant): boolean =>
+    a.count !== b.count
+      ? a.count > b.count
+      : a.name.length !== b.name.length
+        ? a.name.length > b.name.length
+        : a.firstIndex < b.firstIndex;
+
+  let anchor = variants[0];
+  for (const v of variants) if (moreFrequent(v, anchor)) anchor = v;
+
+  // A bare-title/honorific-only anchor ("Lord", "the Elder") has no identifying
+  // tokens, so it carries no identity — there's no principled way to tell a
+  // legit fuller form ("Lord Brennan") from a contaminant ("Lord Yaotl Cuatzo").
+  // Return it unchanged rather than let anything extend it; this closes the
+  // all-honorific hijack class entirely (nothing, disjoint or same-title, can
+  // replace it). Only reachable for a genuinely degenerate extraction where a
+  // bare title is a character's single most-frequent name field.
+  const anchorTokens = identifyingTokens(anchor.name);
+  if (anchorTokens.size === 0) return anchor.name;
+
+  const extendsAnchor = (v: NameVariant): boolean => {
+    const t = identifyingTokens(v.name);
+    for (const tok of anchorTokens) if (!t.has(tok)) return false;
+    return true;
+  };
+
+  // Among clean proper-name forms that extend the anchor, prefer the most name
+  // parts (fuller), then the most total tokens (retain a title/honorific once
+  // the surname is in — "Lady Isabel Ruesta" over "Isabel Ruesta"), then
+  // frequency, then earliest occurrence. Falls back to the anchor if it isn't a
+  // proper name at all.
+  let best: NameVariant | null = null;
+  for (const v of variants) {
+    if (!isProperNameForm(v.name) || !extendsAnchor(v)) continue;
+    if (best === null || preferAsCanonical(v, best)) best = v;
+  }
+  return (best ?? anchor).name;
+}
+
+function preferAsCanonical(v: NameVariant, best: NameVariant): boolean {
+  const vi = identifyingTokens(v.name).size;
+  const bi = identifyingTokens(best.name).size;
+  if (vi !== bi) return vi > bi;
+  const vt = tokenize(v.name).length;
+  const bt = tokenize(best.name).length;
+  if (vt !== bt) return vt > bt;
+  if (v.count !== best.count) return v.count > best.count;
+  return v.firstIndex < best.firstIndex;
 }
 
 // Rebuild a full per-character appearance history by replaying every chunk in
@@ -358,6 +492,21 @@ export function buildCharacters(
   const characters: MergedCharacter[] = [];
   const usedIds = new Set<string>();
 
+  // Pre-pass: derive the set of strings that bridge otherwise-unrelated people
+  // (shared epithets like "the Izcalli", or an alias colliding with a different
+  // person's real name like "Ju") from the same sanitized name/alias records the
+  // replay below uses. These are excluded from identity matching so distinct
+  // characters aren't fused through them.
+  const rawRecords: Identified[] = [];
+  for (const chunk of chunks) {
+    for (const raw of chunk.extraction.characters) {
+      const name = sanitizeName(raw.name);
+      if (name.length === 0) continue;
+      rawRecords.push({ name, aliases: sanitizeAliases(name, raw.aliases) });
+    }
+  }
+  const nonIdentifying = collectNonIdentifyingKeys(rawRecords);
+
   for (const chunk of chunks) {
     for (const raw of chunk.extraction.characters) {
       const name = sanitizeName(raw.name);
@@ -365,7 +514,14 @@ export function buildCharacters(
       const aliases = sanitizeAliases(name, raw.aliases);
       const candidate: Identified = { name, aliases };
 
-      let target = findIdentityMatch(candidate, characters);
+      // Match the fresh candidate (its name is always an identity key) against
+      // each existing character's appearance-protected identifier set, so a
+      // record's own past/current names stay matchable even when the same string
+      // is a bridging alias elsewhere and thus flagged non-identifying.
+      const candidateIds = identifierSet(candidate, nonIdentifying);
+      let target = characters.find((known) =>
+        setsIntersect(candidateIds, characterIdentifierSet(known, nonIdentifying))
+      );
       if (!target) {
         const id = uniqueId(slugifyId(name), usedIds);
         usedIds.add(id);
@@ -415,12 +571,19 @@ export function buildCharacters(
     }
   }
 
-  unifyCharacters(characters);
+  unifyCharacters(characters, nonIdentifying);
 
-  // Finalize: target.name may have been promoted to a longer form after some
-  // aliases were already added (or during unification), so re-filter against
-  // the FINAL name.
+  // Finalize: pick the canonical name by frequency (not the transient
+  // longest-wins choice from replay/absorb), then re-filter aliases against the
+  // FINAL name. Every appearance name is folded into the alias pool first so a
+  // name form demoted by the canonical re-pick still survives as a display
+  // alias. Non-identifying strings stay in the display aliases on purpose — they
+  // are only excluded from matching (below) and from nameToId, not from view.
   for (const c of characters) {
+    const canonical = pickCanonicalName(c.appearances);
+    if (canonical) c.name = canonical;
+    for (const a of c.appearances) c.aliases.push(a.name);
+
     const seen = new Set<string>();
     c.aliases = c.aliases.filter((a) => {
       const key = a.toLowerCase();
@@ -435,10 +598,13 @@ export function buildCharacters(
   // are pairwise disjoint at this point, so every lookup has exactly one
   // possible owner — unlike a during-replay map, which is last-write-wins and
   // can disagree with the grouping (a character's own statements resolving to
-  // someone else's id).
+  // someone else's id). Non-identifying keys are excluded here too (same rule as
+  // matching): a shared epithet resolves to nobody (benign unresolved-name
+  // warning), while a name-collision string still resolves via its genuine
+  // name-holder, whose name is always kept.
   const nameToId = new Map<string, string>();
   for (const c of characters) {
-    for (const ident of identifierSet(c)) nameToId.set(ident, c.id);
+    for (const ident of characterIdentifierSet(c, nonIdentifying)) nameToId.set(ident, c.id);
   }
 
   return { characters, nameToId };

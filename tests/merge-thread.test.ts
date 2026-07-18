@@ -13,6 +13,7 @@ import {
   DEFAULT_PROGRESSION_ORDERS,
   slugifyId,
   uniqueId,
+  pickCanonicalName,
   buildCharacters,
   buildRelationshipsAndEvents,
   buildThread,
@@ -367,7 +368,9 @@ describe("buildCharacters", () => {
     assert.equal(characters[0].appearances.length, 2);
   });
 
-  test("longest name becomes canonical; the demoted name survives as an alias", () => {
+  test("frequency ties break by longest name; the demoted name survives as an alias", () => {
+    // "Henry" and "Henry Ashford" each appear once (a 1-1 frequency tie), so the
+    // longest-name tiebreak makes "Henry Ashford" canonical.
     const { characters, nameToId } = buildCharacters([
       chunk(4, { characters: [character("Henry")] }),
       chunk(35, { characters: [character("Henry Ashford", { aliases: ["Henry"] })] }),
@@ -380,19 +383,39 @@ describe("buildCharacters", () => {
     assert.equal(nameToId.get("henry ashford"), characters[0].id);
   });
 
-  test("old canonical name is kept when promotion arrives via a shared alias", () => {
+  test("a promoted-away name that is a bridging alias elsewhere stays matchable", () => {
+    // "Ju" is the genuine name of one character but also a stray (bridging) alias
+    // on the unrelated "Lan", so it is flagged non-identifying. When the real Ju's
+    // record gets its name promoted to the longer "Ju Wei" via a shared alias, the
+    // demoted "Ju" must remain a protected identity key — a later bare "Ju"
+    // appearance must fold into that same record, not spawn a duplicate.
+    const { characters, nameToId } = buildCharacters([
+      chunk(1, { characters: [character("Lan", { aliases: ["Ju"] })] }),
+      chunk(2, { characters: [character("Ju", { aliases: ["Silverhand"] })] }),
+      chunk(3, { characters: [character("Ju Wei", { aliases: ["Silverhand"] })] }),
+      chunk(4, { characters: [character("Ju")] }),
+    ]);
+    // Lan stays separate; the three Ju records collapse into exactly one.
+    assert.equal(characters.length, 2);
+    const ju = characters.find((c) => c.id !== nameToId.get("lan"))!;
+    assert.equal(ju.appearances.filter((a) => a.name === "Ju").length, 2);
+    assert.equal(nameToId.get("ju"), ju.id);
+    assert.notEqual(nameToId.get("ju"), nameToId.get("lan"));
+  });
+
+  test("a bridging descriptor alias no longer fuses token-disjoint names", () => {
+    // "carriage driver" and "older man participant" share no identifying token;
+    // the only link is the descriptor alias "carriage driver". That descriptor
+    // bridges two unrelated names, so it is non-identifying and must NOT merge
+    // them — the unit-level form of the Potter's Path "an older man" split.
+    // (Before the non-identifying-key fix this over-merged into one character.)
     const { characters } = buildCharacters([
       chunk(25, { characters: [character("carriage driver")] }),
       chunk(41, {
         characters: [character("older man participant", { aliases: ["carriage driver"] })],
       }),
     ]);
-    assert.equal(characters.length, 1);
-    assert.equal(characters[0].name, "older man participant");
-    assert.ok(
-      characters[0].aliases.some((a) => a.toLowerCase() === "carriage driver"),
-      "demoted name must remain reachable as an alias"
-    );
+    assert.equal(characters.length, 2);
   });
 
   test("unification: records split by the greedy pass merge once identifiers overlap", () => {
@@ -506,6 +529,158 @@ describe("buildCharacters", () => {
     assert.equal(characters.length, 1);
     assert.equal(characters[0].name, "Henry");
   });
+
+  test("splits all five contaminated fusion shapes into distinct characters", () => {
+    const { characters, nameToId } = buildCharacters([
+      // shared ethnic epithet "the Izcalli" bridging three unrelated names
+      chunk(1, {
+        characters: [
+          character("Yaotl Cuatzo", { aliases: ["the Izcalli"] }),
+          character("Tupoc Xical", { aliases: ["the Izcalli"] }),
+          character("Yaretzi", { aliases: ["the Izcalli"] }),
+        ],
+      }),
+      // shared faction epithet "the Tianxi"
+      chunk(2, {
+        characters: [
+          character("Song", { aliases: ["the Tianxi"] }),
+          character("Yong", { aliases: ["the Tianxi"] }),
+        ],
+      }),
+      // shared rank epithet "infanzona" behind a shared "Lady" honorific
+      chunk(3, {
+        characters: [
+          character("Lady Isabel Ruesta", { aliases: ["infanzona"] }),
+          character("Lady Ferranda Villazur", { aliases: ["infanzona"] }),
+        ],
+      }),
+      // alias-to-name collisions: "Ju"/"Brun" are real names mis-listed as aliases
+      chunk(4, {
+        characters: [
+          character("Lan", { aliases: ["Ju"] }),
+          character("Ju"),
+          character("Tristan", { aliases: ["Brun"] }),
+          character("Brun"),
+        ],
+      }),
+    ]);
+
+    const names = [
+      "Yaotl Cuatzo", "Tupoc Xical", "Yaretzi", "Song", "Yong",
+      "Lady Isabel Ruesta", "Lady Ferranda Villazur", "Lan", "Ju", "Tristan", "Brun",
+    ];
+    assert.equal(characters.length, names.length);
+    const ids = names.map((n) => nameToId.get(n.toLowerCase()));
+    assert.ok(ids.every((id) => id !== undefined), "every canonical name resolves");
+    assert.equal(new Set(ids).size, names.length, "each name resolves to a distinct character");
+  });
+});
+
+describe("pickCanonicalName", () => {
+  const named = (name: string): CharacterAppearance => ({
+    chapterIndex: 0,
+    chapterTitle: null,
+    name,
+    aliases: [],
+    description: "",
+    role: "minor" as CharacterRole,
+  });
+
+  test("a token-disjoint longer variant never hijacks the anchor", () => {
+    // "Yaotl Cuatzo" is longer but shares no token with the dominant "Tupoc
+    // Xical", so it cannot extend the anchor and is ignored.
+    assert.equal(
+      pickCanonicalName([
+        named("Tupoc Xical"),
+        named("Tupoc Xical"),
+        named("Tupoc Xical"),
+        named("Yaotl Cuatzo"),
+      ]),
+      "Tupoc Xical"
+    );
+  });
+
+  test("upgrades a frequent short name to its fuller proper-name form", () => {
+    // "Henry" dominates by frequency, but "Henry Ashford" extends it (adds a
+    // surname) → the full first-and-last name is chosen.
+    assert.equal(
+      pickCanonicalName([
+        named("Henry"),
+        named("Henry"),
+        named("Henry"),
+        named("Henry Ashford"),
+      ]),
+      "Henry Ashford"
+    );
+  });
+
+  test("does not upgrade to a descriptive, non-proper name form", () => {
+    // "Henry the struggling potter" has lowercase filler words → not a proper
+    // name, so it never replaces the anchor.
+    assert.equal(
+      pickCanonicalName([
+        named("Henry"),
+        named("Henry"),
+        named("Henry the struggling potter"),
+      ]),
+      "Henry"
+    );
+  });
+
+  test("keeps the dominant honorific+surname form when nothing extends it", () => {
+    // Neither "Lord Brennan" nor "Master Brennan" extends the other (same single
+    // identifying token "brennan"), so the more frequent one wins.
+    assert.equal(
+      pickCanonicalName([
+        named("Lord Brennan"),
+        named("Lord Brennan"),
+        named("Master Brennan"),
+      ]),
+      "Lord Brennan"
+    );
+  });
+
+  test("retains the title once the surname is included", () => {
+    // "Isabel Ruesta" and "Lady Isabel Ruesta" carry the same name parts; the
+    // title-bearing form is kept.
+    assert.equal(
+      pickCanonicalName([
+        named("Isabel Ruesta"),
+        named("Lady Isabel Ruesta"),
+        named("Lady Isabel Ruesta"),
+      ]),
+      "Lady Isabel Ruesta"
+    );
+  });
+
+  test("a bare-title anchor is returned unchanged, so nothing can hijack it", () => {
+    // "Lord" dominates and has no identifying tokens, so it carries no identity:
+    // neither a token-disjoint contaminant ("Yaotl Cuatzo") nor a same-title
+    // fuller form ("Lord Yaotl Cuatzo") may replace it.
+    assert.equal(pickCanonicalName([named("Lord"), named("Lord"), named("Yaotl Cuatzo")]), "Lord");
+    assert.equal(
+      pickCanonicalName([named("Lord"), named("Lord"), named("Lord Yaotl Cuatzo")]),
+      "Lord"
+    );
+  });
+
+  test("mixed composed/decomposed occurrences aggregate into one frequency variant", () => {
+    // Two encodings of the same name must count as ONE variant (freq 2), beating
+    // the longer "Alexander" (freq 1) — which would otherwise win the freq tie on
+    // length if the encodings were counted separately.
+    const result = pickCanonicalName([
+      named("Jos\u00E9"), // composed
+      named("Jose\u0301"), // decomposed — same name as above
+      named("Alexander"), // longer; wins only if the two above do not aggregate
+    ]);
+    assert.equal(result.normalize("NFC"), "Jos\u00E9");
+  });
+
+  test("upgrades the display spelling to a proper-name form", () => {
+    // First occurrence is lowercase "henry"; a later "Henry" of the same variant
+    // provides the proper-name spelling used for display.
+    assert.equal(pickCanonicalName([named("henry"), named("henry"), named("Henry")]), "Henry");
+  });
 });
 
 // --- relationships and events ------------------------------------------------
@@ -517,6 +692,46 @@ describe("buildRelationshipsAndEvents", () => {
     const { relationships, events } = buildRelationshipsAndEvents(chunks, nameToId, warnings);
     return { characters, relationships, events, warnings };
   }
+
+  test("shared epithet endpoint is unresolved; name-collision endpoint resolves to its name-holder", () => {
+    const chunks = [
+      chunk(1, {
+        characters: [
+          character("Yaotl Cuatzo", { aliases: ["the Izcalli"] }),
+          character("Tupoc Xical", { aliases: ["the Izcalli"] }),
+          character("Lan", { aliases: ["Ju"] }),
+          character("Ju"),
+          character("Alaric"),
+        ],
+        relationships: [
+          { from: "the Izcalli", to: "Alaric", type: "ally", description: "e1" },
+          { from: "Ju", to: "Lan", type: "sibling", description: "e2" },
+        ],
+      }),
+    ];
+    const { characters, relationships, warnings } = setup(chunks);
+
+    // (a) a pure shared epithet is absent from nameToId → unresolved-name
+    // warning, and crucially NOT a self-referential one.
+    assert.ok(warnings.some((w) => /unresolved name "the Izcalli"/.test(w)), "the Izcalli must be unresolved");
+    assert.equal(warnings.some((w) => /self-referential/.test(w)), false, "no self-referential warning");
+
+    // (b) a name-collision endpoint still resolves to the genuine name-holder,
+    // distinct from the record that mis-listed it as an alias.
+    const ju = characters.find((c) => c.name === "Ju")!;
+    const lan = characters.find((c) => c.name === "Lan")!;
+    assert.notEqual(ju.id, lan.id);
+    const rel = relationships.find(
+      (r) => r.participantIds.includes(ju.id) && r.participantIds.includes(lan.id)
+    );
+    assert.ok(rel, "Ju–Lan relationship resolves to two distinct characters");
+
+    // both kinds of demoted string still show as display aliases: the shared
+    // epithet on Yaotl, and the name-collision alias "Ju" on Lan.
+    const yaotl = characters.find((c) => c.name === "Yaotl Cuatzo")!;
+    assert.ok(yaotl.aliases.some((a) => a.toLowerCase() === "the izcalli"), "epithet kept for display");
+    assert.ok(lan.aliases.some((a) => a.toLowerCase() === "ju"), "collision alias kept on Lan for display");
+  });
 
   test("direction flips bucket together; each statement keeps its stated direction", () => {
     const chunks = [
