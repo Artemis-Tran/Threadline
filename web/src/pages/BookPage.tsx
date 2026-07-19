@@ -24,7 +24,9 @@ type LoadState =
   | { status: "missing" }
   | { status: "empty" }
   | { status: "error"; message: string }
-  | { status: "ready"; thread: Thread; range: ChapterRange };
+  // defaults carry the prefs-resolved cap/tab so the URL-derived view state
+  // has a correct fallback while the canonical URL write is still in transit.
+  | { status: "ready"; thread: Thread; range: ChapterRange; defaults: { cap: number; tab: TabId } };
 
 function parseIntOrNull(s: string | null): number | null {
   if (s === null) return null;
@@ -45,11 +47,27 @@ export default function BookPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [cap, setCap] = useState(0);
-  const [tab, setTab] = useState<TabId>("characters");
-  const [character, setCharacter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const initialized = useRef(false);
+  // The URL is the single source of truth for cap/tab/character — they are
+  // derived from searchParams below, never mirrored into useState. Mirroring
+  // caused visible A-B-A stutters: setSearchParams applies in a React
+  // transition, so mirrored state landed a render before the URL, and any
+  // "reconcile from URL" effect misread the gap as an external navigation and
+  // reverted fresh state to stale URL values (then flipped it forward again).
+  //
+  // optimisticParams exists only for write *chaining*: two quick writes to
+  // different fields in the same gap must build on each other, not on the
+  // render's lagging searchParams. It never feeds rendering, and any URL
+  // landing clears it (see effect below).
+  const optimisticParams = useRef<URLSearchParams | null>(null);
+  const searchParamsRef = useRef(searchParams);
+  searchParamsRef.current = searchParams;
+
+  useEffect(() => {
+    // Any landed URL change ends the chaining window: from here, new writes
+    // must build on the real URL (our writes landed, or Back/Forward won).
+    optimisticParams.current = null;
+  }, [searchParams]);
 
   // Load the thread; seed cap/tab/character from the URL (deep links win), then
   // saved prefs, then the safe default. Then canonicalize the URL (so it matches
@@ -57,7 +75,7 @@ export default function BookPage() {
   // searchParams only at load time on purpose.
   useEffect(() => {
     let active = true;
-    initialized.current = false;
+    optimisticParams.current = null;
     setState({ status: "loading" });
     if (!slug) {
       setState({ status: "missing" });
@@ -83,20 +101,17 @@ export default function BookPage() {
         const initTab = readTab(searchParams.get("tab")) ?? prefs?.activeTab ?? "characters";
         const initChar = urlChar && urlChar.length > 0 ? urlChar : null;
 
-        setCap(initCap);
-        setTab(initTab);
-        setCharacter(initChar);
         setQuery("");
-        setState({ status: "ready", thread, range });
+        setState({ status: "ready", thread, range, defaults: { cap: initCap, tab: initTab } });
 
         const p = new URLSearchParams();
         p.set("upto", String(initCap));
         p.set("tab", initTab);
         if (initChar) p.set("character", initChar);
-        setSearchParams(p, { replace: true });
+        if (p.toString() !== searchParams.toString()) {
+          setSearchParams(p, { replace: true });
+        }
         void setPrefs({ slug, chapterCap: initCap, activeTab: initTab }).catch(() => {});
-
-        initialized.current = true;
       } catch (e) {
         if (active) {
           setState({ status: "error", message: e instanceof Error ? e.message : "Failed to load this book." });
@@ -109,53 +124,44 @@ export default function BookPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  // Reconcile state from the URL when it changes externally (browser Back/
-  // Forward). Handlers below update state and URL together, so those pass
-  // through here as no-ops; only an out-of-band URL change moves state.
-  useEffect(() => {
-    if (!initialized.current || state.status !== "ready") return;
-    const urlCap = resolveCap([parseIntOrNull(searchParams.get("upto"))], state.range);
-    const urlTab = readTab(searchParams.get("tab")) ?? "characters";
-    const urlChar = searchParams.get("character") || null;
-    if (urlCap !== cap) setCap(urlCap);
-    if (urlTab !== tab) setTab(urlTab);
-    if (urlChar !== character) setCharacter(urlChar);
-  }, [searchParams, state, cap, tab, character]);
+  const ready = state.status === "ready" ? state : null;
+
+  // View state, derived from the URL every render — deep links and Back/
+  // Forward are handled by construction, with no reconciliation logic. The
+  // defaults cover the frames before the canonical URL write lands (and a
+  // hand-edited URL missing a param).
+  const cap = ready ? resolveCap([parseIntOrNull(searchParams.get("upto")), ready.defaults.cap], ready.range) : 0;
+  const tab: TabId = (ready && readTab(searchParams.get("tab"))) || (ready ? ready.defaults.tab : "characters");
+  const rawChar = searchParams.get("character");
+  const character = rawChar && rawChar.length > 0 ? rawChar : null;
 
   // Persist cap + tab per book, debounced so a slider drag isn't hundreds of writes.
   useEffect(() => {
-    if (!initialized.current || !slug) return;
+    if (!ready || !slug) return;
     const id = window.setTimeout(() => void setPrefs({ slug, chapterCap: cap, activeTab: tab }).catch(() => {}), 250);
     return () => window.clearTimeout(id);
-  }, [cap, tab, slug]);
+  }, [ready, cap, tab, slug]);
 
-  // Write state + URL together. Slider/tab use replace (no history noise);
-  // opening a character pushes so browser Back returns to the list.
+  // All interaction goes through the URL. Slider/tab use replace (no history
+  // noise); opening a character pushes so browser Back returns to the list.
+  // Writes chain off optimisticParams (not the render's searchParams, which
+  // lags behind in a transition) so rapid successive writes to different
+  // fields build on each other instead of clobbering; no-op writes are skipped.
   const updateParams = useCallback(
     (mutate: (p: URLSearchParams) => void, replace: boolean) => {
-      setSearchParams(
-        (prev) => {
-          const p = new URLSearchParams(prev);
-          mutate(p);
-          return p;
-        },
-        { replace }
-      );
+      const base = optimisticParams.current ?? searchParamsRef.current;
+      const p = new URLSearchParams(base);
+      mutate(p);
+      if (p.toString() === base.toString()) return;
+      optimisticParams.current = p;
+      setSearchParams(p, { replace });
     },
     [setSearchParams]
   );
 
-  const changeCap = useCallback(
-    (n: number) => {
-      setCap(n);
-      updateParams((p) => p.set("upto", String(n)), true);
-    },
-    [updateParams]
-  );
+  const changeCap = useCallback((n: number) => updateParams((p) => p.set("upto", String(n)), true), [updateParams]);
   const selectCharacter = useCallback(
     (id: string) => {
-      setTab("characters");
-      setCharacter(id);
       window.scrollTo({ top: 0 });
       updateParams((p) => {
         p.set("tab", "characters");
@@ -164,23 +170,15 @@ export default function BookPage() {
     },
     [updateParams]
   );
-  const clearCharacter = useCallback(() => {
-    setCharacter(null);
-    updateParams((p) => p.delete("character"), true);
-  }, [updateParams]);
+  const clearCharacter = useCallback(() => updateParams((p) => p.delete("character"), true), [updateParams]);
   const changeTab = useCallback(
-    (t: TabId) => {
-      setTab(t);
-      setCharacter(null);
+    (t: TabId) =>
       updateParams((p) => {
         p.set("tab", t);
         p.delete("character");
-      }, true);
-    },
+      }, true),
     [updateParams]
   );
-
-  const ready = state.status === "ready" ? state : null;
 
   const titleMap = useMemo(
     () => (ready ? chapterTitleMap(ready.thread, cap) : new Map<number, string>()),
