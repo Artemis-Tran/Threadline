@@ -11,6 +11,7 @@ import {
   type LibrarySummary,
 } from "../lib/db";
 import { downloadJson } from "../lib/download";
+import ThemeToggle from "../components/ThemeToggle";
 import styles from "./LibraryPage.module.css";
 
 interface Notice {
@@ -150,6 +151,7 @@ export default function LibraryPage() {
           <button className={styles.ghost} onClick={() => bundleInput.current?.click()} disabled={busy}>
             Import library
           </button>
+          <ThemeToggle />
         </div>
       </header>
 

@@ -20,6 +20,27 @@
           "</body>";
       }
     </script>
+    <!--
+      Pre-paint theme bootstrap. Stamps data-theme on <html> before the first
+      paint so a user who overrode the system theme never sees a wrong-theme
+      flash. Mirrors the tiny resolve logic in src/lib/theme.ts — duplicated
+      on purpose, since an inline script can't import modules.
+    -->
+    <script>
+      (function () {
+        var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        try {
+          var stored = localStorage.getItem("threadline-theme");
+          if (stored === "light" || stored === "dark") {
+            document.documentElement.dataset.theme = stored;
+            return;
+          }
+        } catch (e) {
+          // localStorage can throw in strict privacy modes — fall through
+        }
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

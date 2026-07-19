@@ -1,3 +1,9 @@
+/* Light is the base palette; dark applies via [data-theme="dark"]. Theme
+   resolution (system preference + user override) lives in JS — the pre-paint
+   bootstrap in index.html plus src/lib/theme.ts — which always stamps a
+   concrete data-theme, so no prefers-color-scheme media query is needed here
+   and each palette is defined exactly once. Light is the no-JS fallback by
+   design: without JS the SPA doesn't render anything anyway. */
 :root {
   --bg: #f1efe8;
   --bg-raised: #fbfaf6;
@@ -17,21 +23,19 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1b1916;
-    --bg-raised: #242119;
-    --ink: #ece7db;
-    --ink-soft: #a79e8c;
-    --line: #3a362c;
-    --accent: #8aaac7;
-    --accent-soft: #2b3a47;
-    --accent-ink: #c7daea;
-    --major: #dd9a54;
-    --moderate: #a79e8c;
-    --danger: #d26c5b;
-    color-scheme: dark;
-  }
+:root[data-theme="dark"] {
+  --bg: #1b1916;
+  --bg-raised: #242119;
+  --ink: #ece7db;
+  --ink-soft: #a79e8c;
+  --line: #3a362c;
+  --accent: #8aaac7;
+  --accent-soft: #2b3a47;
+  --accent-ink: #c7daea;
+  --major: #dd9a54;
+  --moderate: #a79e8c;
+  --danger: #d26c5b;
+  color-scheme: dark;
 }
 
 * {

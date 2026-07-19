@@ -15,6 +15,7 @@ import {
   type ChapterRange,
 } from "../lib/asOf";
 import CharactersTab from "../components/CharactersTab";
+import ThemeToggle from "../components/ThemeToggle";
 import CharacterDetail from "../components/CharacterDetail";
 import TimelineTab from "../components/TimelineTab";
 import styles from "./BookPage.module.css";
@@ -235,6 +236,12 @@ export default function BookPage() {
   if (state.status === "loading") {
     return (
       <main className={styles.page}>
+        <div className={styles.crumbRow}>
+          <p className={styles.crumb}>
+            <Link to="/">← Library</Link>
+          </p>
+          <ThemeToggle />
+        </div>
         <p className={styles.muted}>Loading…</p>
       </main>
     );
@@ -242,9 +249,12 @@ export default function BookPage() {
   if (state.status === "missing" || state.status === "error" || state.status === "empty") {
     return (
       <main className={styles.page}>
-        <p className={styles.crumb}>
-          <Link to="/">← Library</Link>
-        </p>
+        <div className={styles.crumbRow}>
+          <p className={styles.crumb}>
+            <Link to="/">← Library</Link>
+          </p>
+          <ThemeToggle />
+        </div>
         <p className={styles.muted}>
           {state.status === "missing"
             ? "That book isn’t in your library."
@@ -262,9 +272,12 @@ export default function BookPage() {
 
   return (
     <main className={styles.page}>
-      <p className={styles.crumb}>
-        <Link to="/">← Library</Link>
-      </p>
+      <div className={styles.crumbRow}>
+        <p className={styles.crumb}>
+          <Link to="/">← Library</Link>
+        </p>
+        <ThemeToggle />
+      </div>
       <h1 className={styles.title}>{thread.meta.bookTitle ?? thread.meta.slug}</h1>
 
       <section className={styles.cap}>
