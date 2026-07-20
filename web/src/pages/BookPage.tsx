@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import type { Thread } from "@pipeline/types";
-import { getPrefs, getThread, setLastOpened, setPrefs, type TabId } from "../lib/db";
+import { getPrefs, getThread, setLastOpened, setPrefs, type RelViewId, type TabId } from "../lib/db";
 import {
   chapterRange,
   chapterTitleMap,
@@ -9,11 +9,13 @@ import {
   charactersAsOf,
   eventsAsOf,
   eventsForCharacterAsOf,
+  relationshipEdgesAsOf,
   relationshipsForCharacterAsOf,
   resolveCap,
   statsAsOf,
   type ChapterRange,
 } from "../lib/asOf";
+import type { NodeCatalog } from "../lib/graph";
 import CharactersTab from "../components/CharactersTab";
 import ThemeToggle from "../components/ThemeToggle";
 import CharacterDetail from "../components/CharacterDetail";
@@ -27,7 +29,12 @@ type LoadState =
   | { status: "error"; message: string }
   // defaults carry the prefs-resolved cap/tab so the URL-derived view state
   // has a correct fallback while the canonical URL write is still in transit.
-  | { status: "ready"; thread: Thread; range: ChapterRange; defaults: { cap: number; tab: TabId } };
+  | {
+      status: "ready";
+      thread: Thread;
+      range: ChapterRange;
+      defaults: { cap: number; tab: TabId; rel: RelViewId };
+    };
 
 function parseIntOrNull(s: string | null): number | null {
   if (s === null) return null;
@@ -41,6 +48,10 @@ function parseIntOrNull(s: string | null): number | null {
 
 function readTab(s: string | null): TabId | null {
   return s === "timeline" || s === "characters" ? s : null;
+}
+
+function readRelView(s: string | null): RelViewId | null {
+  return s === "grid" || s === "graph" ? s : null;
 }
 
 export default function BookPage() {
@@ -100,19 +111,21 @@ export default function BookPage() {
         const urlChar = searchParams.get("character");
         const initCap = resolveCap([parseIntOrNull(searchParams.get("upto")), prefs?.chapterCap ?? null], range);
         const initTab = readTab(searchParams.get("tab")) ?? prefs?.activeTab ?? "characters";
+        const initRel = readRelView(searchParams.get("rel")) ?? prefs?.relView ?? "grid";
         const initChar = urlChar && urlChar.length > 0 ? urlChar : null;
 
         setQuery("");
-        setState({ status: "ready", thread, range, defaults: { cap: initCap, tab: initTab } });
+        setState({ status: "ready", thread, range, defaults: { cap: initCap, tab: initTab, rel: initRel } });
 
         const p = new URLSearchParams();
         p.set("upto", String(initCap));
         p.set("tab", initTab);
+        p.set("rel", initRel);
         if (initChar) p.set("character", initChar);
         if (p.toString() !== searchParams.toString()) {
           setSearchParams(p, { replace: true });
         }
-        void setPrefs({ slug, chapterCap: initCap, activeTab: initTab }).catch(() => {});
+        void setPrefs({ slug, chapterCap: initCap, activeTab: initTab, relView: initRel }).catch(() => {});
       } catch (e) {
         if (active) {
           setState({ status: "error", message: e instanceof Error ? e.message : "Failed to load this book." });
@@ -133,15 +146,20 @@ export default function BookPage() {
   // hand-edited URL missing a param).
   const cap = ready ? resolveCap([parseIntOrNull(searchParams.get("upto")), ready.defaults.cap], ready.range) : 0;
   const tab: TabId = (ready && readTab(searchParams.get("tab"))) || (ready ? ready.defaults.tab : "characters");
+  const relView: RelViewId = (ready && readRelView(searchParams.get("rel"))) || (ready ? ready.defaults.rel : "grid");
   const rawChar = searchParams.get("character");
   const character = rawChar && rawChar.length > 0 ? rawChar : null;
 
-  // Persist cap + tab per book, debounced so a slider drag isn't hundreds of writes.
+  // Persist cap + tab + relationships sub-view per book, debounced so a
+  // slider drag isn't hundreds of writes.
   useEffect(() => {
     if (!ready || !slug) return;
-    const id = window.setTimeout(() => void setPrefs({ slug, chapterCap: cap, activeTab: tab }).catch(() => {}), 250);
+    const id = window.setTimeout(
+      () => void setPrefs({ slug, chapterCap: cap, activeTab: tab, relView }).catch(() => {}),
+      250
+    );
     return () => window.clearTimeout(id);
-  }, [ready, cap, tab, slug]);
+  }, [ready, cap, tab, relView, slug]);
 
   // All interaction goes through the URL. Slider/tab use replace (no history
   // noise); opening a character pushes so browser Back returns to the list.
@@ -172,6 +190,13 @@ export default function BookPage() {
     [updateParams]
   );
   const clearCharacter = useCallback(() => updateParams((p) => p.delete("character"), true), [updateParams]);
+  // `rel` deliberately persists across tabs/characters (like `upto`): deleting
+  // it would make the derived value fall back to the load-time default, and
+  // the debounced prefs write would then clobber a choice made this session.
+  const changeRelView = useCallback(
+    (v: RelViewId) => updateParams((p) => p.set("rel", v), true),
+    [updateParams]
+  );
   const changeTab = useCallback(
     (t: TabId) =>
       updateParams((p) => {
@@ -197,18 +222,27 @@ export default function BookPage() {
     [titleMap]
   );
 
+  const allCharacters = useMemo(() => (ready ? charactersAsOf(ready.thread, cap) : []), [ready, cap]);
+
   const characters = useMemo(() => {
-    if (!ready) return [];
-    const all = charactersAsOf(ready.thread, cap);
     const q = query.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter(
+    if (!q) return allCharacters;
+    return allCharacters.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         c.description.toLowerCase().includes(q) ||
         c.aliases.some((a) => a.toLowerCase().includes(q))
     );
-  }, [ready, cap, query]);
+  }, [allCharacters, query]);
+
+  // Graph inputs: canonical spoiler-safe identity for every character visible
+  // at the cap (unfiltered — the search box must not shrink the graph), plus
+  // the cap-filtered edge list.
+  const nodeCatalog = useMemo<NodeCatalog>(
+    () => new Map(allCharacters.map((c) => [c.id, { name: c.name, role: c.role }])),
+    [allCharacters]
+  );
+  const relEdges = useMemo(() => (ready ? relationshipEdgesAsOf(ready.thread, cap) : []), [ready, cap]);
 
   const events = useMemo(() => {
     if (!ready) return [];
@@ -333,6 +367,10 @@ export default function BookPage() {
             detail={detail}
             relationships={detailRels}
             events={detailEvents}
+            relView={relView}
+            onChangeRelView={changeRelView}
+            catalog={nodeCatalog}
+            edges={relEdges}
             onSelectCharacter={selectCharacter}
             onBack={clearCharacter}
             chapterLabel={chapterLabel}

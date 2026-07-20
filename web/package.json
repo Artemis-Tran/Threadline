@@ -10,12 +10,14 @@
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "d3-force": "^3.0.0",
     "idb": "^8.0.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

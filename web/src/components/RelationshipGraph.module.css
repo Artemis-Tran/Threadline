@@ -1,0 +1,232 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.canvas {
+  height: 420px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  /* Node dragging owns the pointer; don't fight mobile scroll gestures. */
+  touch-action: none;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.node {
+  cursor: grab;
+  outline: none;
+}
+
+.node:focus-visible .circle,
+.node:focus-visible .circleRoot {
+  stroke: var(--major);
+  stroke-width: 2.5;
+}
+
+.circle {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.circleRoot {
+  fill: var(--accent);
+  stroke: var(--accent-ink);
+  stroke-width: 1.5;
+}
+
+.circleSelected {
+  stroke: var(--major);
+  stroke-width: 2.5;
+}
+
+.nodeLabel {
+  font-family: var(--sans);
+  font-size: 11px;
+  fill: var(--ink);
+  text-anchor: middle;
+  user-select: none;
+}
+
+.edge,
+.edgeSelected {
+  cursor: pointer;
+  outline: none;
+}
+
+.edgeHit {
+  stroke: transparent;
+  stroke-width: 14;
+}
+
+.edgeLine {
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.edgeSelected .edgeLine,
+.edge:focus-visible .edgeLine {
+  stroke: var(--major);
+  stroke-width: 2;
+}
+
+/* Type labels for every edge at once are an unreadable blob at the center of
+   a dense ego network — reveal a label only when its edge is engaged. */
+.edgeLabel {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--ink-soft);
+  text-anchor: middle;
+  user-select: none;
+  opacity: 0;
+}
+
+.edge:hover .edgeLabel,
+.edge:focus-visible .edgeLabel,
+.edgeSelected .edgeLabel {
+  opacity: 1;
+  fill: var(--ink);
+}
+
+.panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.8rem 0.9rem;
+  min-height: 4.5rem;
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.panelHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.panelName {
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  color: var(--ink);
+}
+
+.panelSep {
+  color: var(--accent);
+}
+
+.panelRole {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.panelBtn {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--ink);
+  padding: 0.25rem 0.7rem;
+}
+
+.panelBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.panelList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+}
+
+.panelLink {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--accent-ink);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.panelLink:hover {
+  text-decoration: underline;
+}
+
+.panelType {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.panelDesc {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.panelHistory {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.panelHistoryItem {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.75rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.panelWhen {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.panelHint {
+  color: var(--ink-soft);
+  font-style: italic;
+  font-size: 0.85rem;
+  margin: 0;
+}

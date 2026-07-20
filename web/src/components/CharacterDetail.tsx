@@ -1,11 +1,19 @@
-import type { CharacterDetailView, EventView, RelationshipView } from "../lib/asOf";
+import { useState } from "react";
+import type { CharacterDetailView, EventView, RelationshipEdgeView, RelationshipView } from "../lib/asOf";
+import type { NodeCatalog } from "../lib/graph";
+import type { RelViewId } from "../lib/db";
 import { ROLE_LABELS } from "../lib/constants";
+import RelationshipGraph from "./RelationshipGraph";
 import styles from "./CharacterDetail.module.css";
 
 export default function CharacterDetail({
   detail,
   relationships,
   events,
+  relView,
+  onChangeRelView,
+  catalog,
+  edges,
   onSelectCharacter,
   onBack,
   chapterLabel,
@@ -13,10 +21,20 @@ export default function CharacterDetail({
   detail: CharacterDetailView;
   relationships: RelationshipView[];
   events: EventView[];
+  relView: RelViewId;
+  onChangeRelView: (v: RelViewId) => void;
+  catalog: NodeCatalog;
+  edges: RelationshipEdgeView[];
   onSelectCharacter: (id: string) => void;
   onBack: () => void;
   chapterLabel: (index: number) => string;
 }) {
+  // Lazy-mount latch: users who never open the graph pay nothing for it.
+  // Once mounted it stays mounted and is `hidden`-toggled (same anti-flicker
+  // pattern as the page tabs).
+  const [graphMounted, setGraphMounted] = useState(relView === "graph");
+  if (relView === "graph" && !graphMounted) setGraphMounted(true);
+
   return (
     <div className={styles.detail}>
       <button className={styles.back} onClick={onBack}>
@@ -61,24 +79,59 @@ export default function CharacterDetail({
       )}
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>
-          Relationships<span className={styles.count}>{relationships.length}</span>
-        </h3>
-        {relationships.length === 0 ? (
-          <p className={styles.muted}>No relationships known yet at this point.</p>
-        ) : (
-          <ul className={styles.relList}>
-            {relationships.map((r) => (
-              <li key={r.id} className={styles.rel}>
-                <button className={styles.relOther} onClick={() => onSelectCharacter(r.otherId)}>
-                  {r.otherName}
-                </button>
-                <span className={styles.relType}>{r.type}</span>
-                {r.description && <p className={styles.relDesc}>{r.description}</p>}
-                <span className={styles.relWhen}>as of {chapterLabel(r.chapterIndex)}</span>
-              </li>
-            ))}
-          </ul>
+        <div className={styles.sectionHead}>
+          <h3 className={styles.sectionTitle}>
+            Relationships<span className={styles.count}>{relationships.length}</span>
+          </h3>
+          <div className={styles.subTabs} role="tablist" aria-label="Relationships view">
+            <button
+              role="tab"
+              aria-selected={relView === "grid"}
+              className={relView === "grid" ? styles.subTabActive : styles.subTab}
+              onClick={() => onChangeRelView("grid")}
+            >
+              Grid
+            </button>
+            <button
+              role="tab"
+              aria-selected={relView === "graph"}
+              className={relView === "graph" ? styles.subTabActive : styles.subTab}
+              onClick={() => onChangeRelView("graph")}
+            >
+              Graph
+            </button>
+          </div>
+        </div>
+        <div hidden={relView !== "grid"}>
+          {relationships.length === 0 ? (
+            <p className={styles.muted}>No relationships known yet at this point.</p>
+          ) : (
+            <ul className={styles.relList}>
+              {relationships.map((r) => (
+                <li key={r.id} className={styles.rel}>
+                  <button className={styles.relOther} onClick={() => onSelectCharacter(r.otherId)}>
+                    {r.otherName}
+                  </button>
+                  <span className={styles.relType}>{r.type}</span>
+                  {r.description && <p className={styles.relDesc}>{r.description}</p>}
+                  <span className={styles.relWhen}>as of {chapterLabel(r.chapterIndex)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {graphMounted && (
+          <div hidden={relView !== "graph"}>
+            <RelationshipGraph
+              key={detail.id}
+              rootId={detail.id}
+              catalog={catalog}
+              edges={edges}
+              visible={relView === "graph"}
+              onSelectCharacter={onSelectCharacter}
+              chapterLabel={chapterLabel}
+            />
+          </div>
         )}
       </section>
 
