@@ -93,6 +93,14 @@ Pipeline stages, in order:
    - 5-C. ✅ Wiki view: chapter-cap slider, Characters/Timeline tabs,
      search, per-character drill-in with relationship cross-links; cap/
      tab/character synced to the URL and to per-book IndexedDB prefs.
+     The Timeline later gained a List/"Story map" sub-tab pair (`tl` URL
+     param + optional-additive `timelineView` pref): a vertical storyline
+     chart (pure layout engine in `web/src/lib/storymap.ts` — greedy
+     block-pull + bounded crossing refinement, unit-tested) with up to 5
+     role-auto-selected, user-adjustable character lanes, majors-only
+     default with per-chapter "+N more" expanders, orphan events on the
+     chapter rail, and a click-for-detail panel. See
+     `plans/timeline-story-map-plan.md`.
    - 5-D. ✅ Ship: GitHub Actions workflow (`.github/workflows/deploy.yml`)
      builds `web/` and deploys to GitHub Pages on push to `master`. One
      manual step remains outside the repo: enable Pages with Source =

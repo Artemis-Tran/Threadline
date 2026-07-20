@@ -4,6 +4,38 @@
   padding: 2rem 0;
 }
 
+/* List/Story-map sub-tabs (same look as CharacterDetail's relationship
+   sub-tabs). */
+.subTabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.9rem;
+}
+
+.subTab,
+.subTabActive {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  padding: 0.2rem 0.45rem 0.45rem;
+  border-bottom: 2px solid transparent;
+}
+
+.subTabActive {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.subTab:hover {
+  color: var(--ink);
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import type { Thread } from "@pipeline/types";
-import { getPrefs, getThread, setLastOpened, setPrefs, type RelViewId, type TabId } from "../lib/db";
+import { getPrefs, getThread, setLastOpened, setPrefs, type RelViewId, type TabId, type TimelineViewId } from "../lib/db";
 import {
   chapterRange,
   chapterTitleMap,
@@ -33,7 +33,7 @@ type LoadState =
       status: "ready";
       thread: Thread;
       range: ChapterRange;
-      defaults: { cap: number; tab: TabId; rel: RelViewId };
+      defaults: { cap: number; tab: TabId; rel: RelViewId; tl: TimelineViewId };
     };
 
 function parseIntOrNull(s: string | null): number | null {
@@ -52,6 +52,10 @@ function readTab(s: string | null): TabId | null {
 
 function readRelView(s: string | null): RelViewId | null {
   return s === "grid" || s === "graph" ? s : null;
+}
+
+function readTimelineView(s: string | null): TimelineViewId | null {
+  return s === "list" || s === "map" ? s : null;
 }
 
 export default function BookPage() {
@@ -112,20 +116,29 @@ export default function BookPage() {
         const initCap = resolveCap([parseIntOrNull(searchParams.get("upto")), prefs?.chapterCap ?? null], range);
         const initTab = readTab(searchParams.get("tab")) ?? prefs?.activeTab ?? "characters";
         const initRel = readRelView(searchParams.get("rel")) ?? prefs?.relView ?? "grid";
+        const initTl = readTimelineView(searchParams.get("tl")) ?? prefs?.timelineView ?? "list";
         const initChar = urlChar && urlChar.length > 0 ? urlChar : null;
 
         setQuery("");
-        setState({ status: "ready", thread, range, defaults: { cap: initCap, tab: initTab, rel: initRel } });
+        setState({
+          status: "ready",
+          thread,
+          range,
+          defaults: { cap: initCap, tab: initTab, rel: initRel, tl: initTl },
+        });
 
         const p = new URLSearchParams();
         p.set("upto", String(initCap));
         p.set("tab", initTab);
         p.set("rel", initRel);
+        p.set("tl", initTl);
         if (initChar) p.set("character", initChar);
         if (p.toString() !== searchParams.toString()) {
           setSearchParams(p, { replace: true });
         }
-        void setPrefs({ slug, chapterCap: initCap, activeTab: initTab, relView: initRel }).catch(() => {});
+        void setPrefs({ slug, chapterCap: initCap, activeTab: initTab, relView: initRel, timelineView: initTl }).catch(
+          () => {}
+        );
       } catch (e) {
         if (active) {
           setState({ status: "error", message: e instanceof Error ? e.message : "Failed to load this book." });
@@ -147,6 +160,8 @@ export default function BookPage() {
   const cap = ready ? resolveCap([parseIntOrNull(searchParams.get("upto")), ready.defaults.cap], ready.range) : 0;
   const tab: TabId = (ready && readTab(searchParams.get("tab"))) || (ready ? ready.defaults.tab : "characters");
   const relView: RelViewId = (ready && readRelView(searchParams.get("rel"))) || (ready ? ready.defaults.rel : "grid");
+  const timelineView: TimelineViewId =
+    (ready && readTimelineView(searchParams.get("tl"))) || (ready ? ready.defaults.tl : "list");
   const rawChar = searchParams.get("character");
   const character = rawChar && rawChar.length > 0 ? rawChar : null;
 
@@ -155,11 +170,11 @@ export default function BookPage() {
   useEffect(() => {
     if (!ready || !slug) return;
     const id = window.setTimeout(
-      () => void setPrefs({ slug, chapterCap: cap, activeTab: tab, relView }).catch(() => {}),
+      () => void setPrefs({ slug, chapterCap: cap, activeTab: tab, relView, timelineView }).catch(() => {}),
       250
     );
     return () => window.clearTimeout(id);
-  }, [ready, cap, tab, relView, slug]);
+  }, [ready, cap, tab, relView, timelineView, slug]);
 
   // All interaction goes through the URL. Slider/tab use replace (no history
   // noise); opening a character pushes so browser Back returns to the list.
@@ -195,6 +210,11 @@ export default function BookPage() {
   // the debounced prefs write would then clobber a choice made this session.
   const changeRelView = useCallback(
     (v: RelViewId) => updateParams((p) => p.set("rel", v), true),
+    [updateParams]
+  );
+  // `tl` persists across tabs like `rel` — see the comment above changeRelView.
+  const changeTimelineView = useCallback(
+    (v: TimelineViewId) => updateParams((p) => p.set("tl", v), true),
     [updateParams]
   );
   const changeTab = useCallback(
@@ -244,15 +264,16 @@ export default function BookPage() {
   );
   const relEdges = useMemo(() => (ready ? relationshipEdgesAsOf(ready.thread, cap) : []), [ready, cap]);
 
+  // The story map always renders the full cap-filtered set (its eventIndex
+  // identities are positions in this array); search filters the List only.
+  const eventsAll = useMemo(() => (ready ? eventsAsOf(ready.thread, cap) : []), [ready, cap]);
   const events = useMemo(() => {
-    if (!ready) return [];
-    const all = eventsAsOf(ready.thread, cap);
     const q = query.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter(
+    if (!q) return eventsAll;
+    return eventsAll.filter(
       (e) => e.summary.toLowerCase().includes(q) || e.participants.some((p) => p.name.toLowerCase().includes(q))
     );
-  }, [ready, cap, query]);
+  }, [eventsAll, query]);
 
   const detail = useMemo(
     () => (ready && character ? characterAsOf(ready.thread, cap, character) : null),
@@ -350,7 +371,9 @@ export default function BookPage() {
             Timeline <span className={styles.tabCount}>{stats.events}</span>
           </button>
         </div>
-        {!character && (
+        {/* The search box filters lists only — hidden on the story map, which
+            always shows the full cap-filtered set. */}
+        {!character && !(tab === "timeline" && timelineView === "map") && (
           <input
             className={styles.search}
             type="search"
@@ -390,7 +413,15 @@ export default function BookPage() {
         <CharactersTab characters={characters} onSelect={selectCharacter} chapterLabel={chapterLabel} />
       </div>
       <div hidden={character !== null || tab !== "timeline"}>
-        <TimelineTab events={events} onSelectCharacter={selectCharacter} chapterLabel={chapterLabel} />
+        <TimelineTab
+          events={events}
+          eventsAll={eventsAll}
+          characters={allCharacters}
+          view={timelineView}
+          onChangeView={changeTimelineView}
+          onSelectCharacter={selectCharacter}
+          chapterLabel={chapterLabel}
+        />
       </div>
     </main>
   );
