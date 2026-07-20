@@ -69,6 +69,29 @@ export interface RelationshipView {
   chapterTitle: string | null;
 }
 
+export interface RelationshipStatementView {
+  chapterIndex: number;
+  chapterTitle: string | null;
+  type: string;
+  description: string;
+}
+
+// Both-endpoint (undirected) view of a relationship for the graph: a/b follow
+// the merged relationship's participantIds order, everything else follows the
+// same latest-survivor rule as RelationshipView.
+export interface RelationshipEdgeView {
+  id: string;
+  aId: string;
+  aName: string;
+  bId: string;
+  bName: string;
+  type: string;
+  description: string;
+  chapterIndex: number;
+  chapterTitle: string | null;
+  history: RelationshipStatementView[]; // <= cutoff, chronological
+}
+
 export interface StatsView {
   characters: number;
   relationships: number;
@@ -243,6 +266,39 @@ export function relationshipsForCharacterAsOf(
     });
   }
   return views.sort((a, b) => a.otherName.localeCompare(b.otherName));
+}
+
+// Every relationship with at least one statement at or before the cutoff,
+// with both endpoints resolved. Sorted by id so output is deterministic
+// regardless of the thread's relationship order.
+export function relationshipEdgesAsOf(thread: Thread, cutoff: number): RelationshipEdgeView[] {
+  const views: RelationshipEdgeView[] = [];
+  for (const r of thread.relationships) {
+    const survivors = r.history
+      .filter((s) => s.chapterIndex <= cutoff)
+      .sort((a, b) => a.chapterIndex - b.chapterIndex);
+    if (survivors.length === 0) continue;
+    const latest = survivors[survivors.length - 1];
+    const [aId, bId] = r.participantIds;
+    views.push({
+      id: r.id,
+      aId,
+      aName: latest.fromId === aId ? latest.fromName : latest.toName,
+      bId,
+      bName: latest.fromId === bId ? latest.fromName : latest.toName,
+      type: latest.type,
+      description: latest.description,
+      chapterIndex: latest.chapterIndex,
+      chapterTitle: latest.chapterTitle,
+      history: survivors.map((s) => ({
+        chapterIndex: s.chapterIndex,
+        chapterTitle: s.chapterTitle,
+        type: s.type,
+        description: s.description,
+      })),
+    });
+  }
+  return views.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function eventView(e: Thread["events"][number]): EventView {

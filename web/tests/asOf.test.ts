@@ -7,6 +7,7 @@ import {
   charactersAsOf,
   eventsAsOf,
   eventsForCharacterAsOf,
+  relationshipEdgesAsOf,
   relationshipsForCharacterAsOf,
   resolveCap,
   statsAsOf,
@@ -140,6 +141,48 @@ test("relationshipsForCharacterAsOf uses the latest surviving statement", () => 
 
   const at2 = relationshipsForCharacterAsOf(makeThread(), 2, "hen");
   assert.equal(at2[0].description, "Fast friends.");
+});
+
+test("relationshipEdgesAsOf hides edges until the first statement", () => {
+  assert.deepEqual(relationshipEdgesAsOf(makeThread(), 0), []);
+});
+
+test("relationshipEdgesAsOf uses the latest surviving statement and truncates history", () => {
+  const at1 = relationshipEdgesAsOf(makeThread(), 1);
+  assert.equal(at1.length, 1);
+  assert.equal(at1[0].description, "Just met.");
+  assert.equal(at1[0].history.length, 1);
+
+  const at2 = relationshipEdgesAsOf(makeThread(), 2);
+  assert.equal(at2[0].description, "Fast friends.");
+  assert.deepEqual(
+    at2[0].history.map((s) => s.description),
+    ["Just met.", "Fast friends."] // chronological
+  );
+});
+
+test("relationshipEdgesAsOf resolves a/b names by participantIds order, not statement direction", () => {
+  const thread = makeThread();
+  // Flip the ch2 statement's direction: mara -> hen. a/b must still follow
+  // participantIds ["hen", "mara"].
+  const s = thread.relationships[0].history[1];
+  [s.fromId, s.fromName, s.toId, s.toName] = [s.toId, s.toName, s.fromId, s.fromName];
+  const [edge] = relationshipEdgesAsOf(thread, 2);
+  assert.equal(edge.aId, "hen");
+  assert.equal(edge.aName, "Hen");
+  assert.equal(edge.bId, "mara");
+  assert.equal(edge.bName, "Mara");
+});
+
+test("relationshipEdgesAsOf sorts by edge id regardless of thread order", () => {
+  const thread = makeThread();
+  const second = structuredClone(thread.relationships[0]);
+  second.id = "aaa--first";
+  thread.relationships.push(second);
+  assert.deepEqual(
+    relationshipEdgesAsOf(thread, 2).map((e) => e.id),
+    ["aaa--first", "hen--mara"]
+  );
 });
 
 test("eventsAsOf filters to the cutoff and preserves null participant ids", () => {

@@ -65,6 +65,14 @@ test("prefs get/set per book", async () => {
   assert.equal(p?.activeTab, "timeline");
 });
 
+test("prefs round-trip the optional relView (and tolerate its absence)", async () => {
+  await setPrefs({ slug: "test-book", chapterCap: 5, activeTab: "timeline", relView: "graph" });
+  assert.equal((await getPrefs("test-book"))?.relView, "graph");
+
+  await setPrefs({ slug: "test-book", chapterCap: 5, activeTab: "timeline" });
+  assert.equal((await getPrefs("test-book"))?.relView, undefined);
+});
+
 test("lastOpened get/set/clear", async () => {
   assert.equal(await getLastOpened(), null);
   await setLastOpened("test-book");
@@ -109,6 +117,43 @@ test("export → import roundtrip restores books and prefs", async () => {
   assert.equal((await listLibrary())[0].title, "Test Book");
   assert.equal((await getPrefs("test-book"))?.chapterCap, 1);
   assert.equal(await getLastOpened(), "test-book");
+});
+
+test("export → import preserves relView; legacy bundles without it still import", async () => {
+  await putThread(threadText());
+  await setPrefs({ slug: "test-book", chapterCap: 1, activeTab: "characters", relView: "graph" });
+  const bundle = await exportBundle();
+  assert.equal(bundle.prefs.perBook["test-book"].relView, "graph");
+
+  await resetDbForTests();
+  await importBundle(bundle);
+  assert.equal((await getPrefs("test-book"))?.relView, "graph");
+
+  // Legacy bundle shape (no relView) remains valid.
+  await resetDbForTests();
+  const legacy = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    books: [{ slug: "test-book", threadJsonText: threadText() }],
+    prefs: { lastOpenedSlug: null, perBook: { "test-book": { chapterCap: 1, activeTab: "characters" } } },
+  };
+  await importBundle(legacy);
+  const p = await getPrefs("test-book");
+  assert.equal(p?.chapterCap, 1);
+  assert.equal(p?.relView, undefined);
+});
+
+test("parseBundle rejects a present-but-invalid relView", () => {
+  const bundle = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    books: [{ slug: "test-book", threadJsonText: threadText() }],
+    prefs: {
+      lastOpenedSlug: null,
+      perBook: { "test-book": { chapterCap: 1, activeTab: "characters", relView: "sideways" } },
+    },
+  };
+  assert.throws(() => parseBundle(bundle), /relView/);
 });
 
 test("importBundle merges — a null lastOpenedSlug leaves an existing pointer intact", async () => {
