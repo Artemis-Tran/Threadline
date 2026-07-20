@@ -18,6 +18,8 @@ export const BUNDLE_VERSION = 1;
 export type TabId = "characters" | "timeline";
 // Relationships sub-view inside a character detail (grid list vs. graph).
 export type RelViewId = "grid" | "graph";
+// Timeline sub-view (chapter list vs. story map).
+export type TimelineViewId = "list" | "map";
 
 export interface LibraryRecord {
   slug: string;
@@ -39,6 +41,8 @@ export interface BookPrefs {
   // Optional-additive (BUNDLE_VERSION stays 1): records/bundles without it
   // remain valid and default to "grid" at read time.
   relView?: RelViewId;
+  // Optional-additive like relView; defaults to "list" at read time.
+  timelineView?: TimelineViewId;
 }
 
 interface AppEntry {
@@ -118,13 +122,13 @@ export interface ExportBundle {
   books: { slug: string; threadJsonText: string }[];
   prefs: {
     lastOpenedSlug: string | null;
-    perBook: Record<string, { chapterCap: number; activeTab: TabId; relView?: RelViewId }>;
+    perBook: Record<string, { chapterCap: number; activeTab: TabId; relView?: RelViewId; timelineView?: TimelineViewId }>;
   };
 }
 
 export function buildBundle(
   books: { slug: string; threadJsonText: string }[],
-  perBook: Record<string, { chapterCap: number; activeTab: TabId; relView?: RelViewId }>,
+  perBook: Record<string, { chapterCap: number; activeTab: TabId; relView?: RelViewId; timelineView?: TimelineViewId }>,
   lastOpenedSlug: string | null
 ): ExportBundle {
   return {
@@ -141,6 +145,7 @@ function isObj(x: unknown): x is Record<string, unknown> {
 
 const VALID_TABS: ReadonlySet<string> = new Set<TabId>(["characters", "timeline"]);
 const VALID_REL_VIEWS: ReadonlySet<string> = new Set<RelViewId>(["grid", "graph"]);
+const VALID_TIMELINE_VIEWS: ReadonlySet<string> = new Set<TimelineViewId>(["list", "map"]);
 
 // Parse + fully validate a raw export bundle into records ready to write.
 // Every embedded thread is validated up front so a bad bundle is rejected
@@ -189,11 +194,18 @@ export function parseBundle(raw: unknown): { records: LibraryRecord[]; prefs: Bo
         if (p.relView !== undefined && (typeof p.relView !== "string" || !VALID_REL_VIEWS.has(p.relView))) {
           throw new ValidationError(`bundle.prefs.perBook["${slug}"].relView: expected "grid" or "graph"`);
         }
+        if (
+          p.timelineView !== undefined &&
+          (typeof p.timelineView !== "string" || !VALID_TIMELINE_VIEWS.has(p.timelineView))
+        ) {
+          throw new ValidationError(`bundle.prefs.perBook["${slug}"].timelineView: expected "list" or "map"`);
+        }
         prefs.push({
           slug,
           chapterCap: p.chapterCap as number,
           activeTab: p.activeTab as TabId,
           ...(p.relView !== undefined ? { relView: p.relView as RelViewId } : {}),
+          ...(p.timelineView !== undefined ? { timelineView: p.timelineView as TimelineViewId } : {}),
         });
       }
     }
@@ -303,12 +315,13 @@ export async function exportBundle(): Promise<ExportBundle> {
     getLastOpened(),
   ]);
   const books = records.map((r) => ({ slug: r.slug, threadJsonText: r.threadJsonText }));
-  const perBook: Record<string, { chapterCap: number; activeTab: TabId; relView?: RelViewId }> = {};
+  const perBook: Record<string, { chapterCap: number; activeTab: TabId; relView?: RelViewId; timelineView?: TimelineViewId }> = {};
   for (const p of allPrefs) {
     perBook[p.slug] = {
       chapterCap: p.chapterCap,
       activeTab: p.activeTab,
       ...(p.relView !== undefined ? { relView: p.relView } : {}),
+      ...(p.timelineView !== undefined ? { timelineView: p.timelineView } : {}),
     };
   }
   return buildBundle(books, perBook, lastOpenedSlug);

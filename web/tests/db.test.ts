@@ -156,6 +156,43 @@ test("parseBundle rejects a present-but-invalid relView", () => {
   assert.throws(() => parseBundle(bundle), /relView/);
 });
 
+test("export → import preserves timelineView; bundles without it still import", async () => {
+  await putThread(threadText());
+  await setPrefs({ slug: "test-book", chapterCap: 1, activeTab: "timeline", timelineView: "map" });
+  const bundle = await exportBundle();
+  assert.equal(bundle.prefs.perBook["test-book"].timelineView, "map");
+
+  await resetDbForTests();
+  await importBundle(bundle);
+  assert.equal((await getPrefs("test-book"))?.timelineView, "map");
+
+  // Bundle shape without timelineView remains valid.
+  await resetDbForTests();
+  const legacy = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    books: [{ slug: "test-book", threadJsonText: threadText() }],
+    prefs: { lastOpenedSlug: null, perBook: { "test-book": { chapterCap: 1, activeTab: "timeline" } } },
+  };
+  await importBundle(legacy);
+  const p = await getPrefs("test-book");
+  assert.equal(p?.chapterCap, 1);
+  assert.equal(p?.timelineView, undefined);
+});
+
+test("parseBundle rejects a present-but-invalid timelineView", () => {
+  const bundle = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    books: [{ slug: "test-book", threadJsonText: threadText() }],
+    prefs: {
+      lastOpenedSlug: null,
+      perBook: { "test-book": { chapterCap: 1, activeTab: "timeline", timelineView: "spiral" } },
+    },
+  };
+  assert.throws(() => parseBundle(bundle), /timelineView/);
+});
+
 test("importBundle merges — a null lastOpenedSlug leaves an existing pointer intact", async () => {
   await putThread(threadText());
   await setLastOpened("test-book");

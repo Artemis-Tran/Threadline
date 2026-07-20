@@ -16,6 +16,17 @@
   --major: #b96a24;
   --moderate: #6b6558;
   --danger: #a8402f;
+  /* Story-map lane palette: 5 categorical slots in a fixed, validated order
+     (worst adjacent CVD ΔE 11.7, normal-vision ΔE 18.1 — OKLab ×100 — well
+     clear of the 8/15 floors). Dusty, ink-wash jewel tones (low chroma
+     near the 0.10 identity floor, darker than a typical categorical set)
+     so lanes read as part of the parchment/ink palette rather than a
+     bright, unrelated rainbow. Never cycled past 5. */
+  --lane-1: #3a62a4;
+  --lane-2: #3c732f;
+  --lane-3: #7c4c8f;
+  --lane-4: #736400;
+  --lane-5: #91456f;
   --radius: 7px;
   --serif: ui-serif, Georgia, "Iowan Old Style", "Palatino Linotype", serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -35,6 +46,11 @@
   --major: #dd9a54;
   --moderate: #a79e8c;
   --danger: #d26c5b;
+  --lane-1: #517abe;
+  --lane-2: #538b47;
+  --lane-3: #9564a8;
+  --lane-4: #8a7b13;
+  --lane-5: #ab5c86;
   color-scheme: dark;
 }
 
