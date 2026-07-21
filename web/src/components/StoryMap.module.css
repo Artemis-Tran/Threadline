@@ -104,14 +104,43 @@
 }
 
 .addLane {
+  appearance: none;
   font-family: inherit;
   font-size: 0.76rem;
-  color: var(--ink);
-  background: var(--bg-raised);
+  color: var(--accent-ink);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--accent) 50%),
+    linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+  background-position:
+    calc(100% - 0.8rem) 50%,
+    calc(100% - 0.55rem) 50%;
+  background-size: 0.28rem 0.28rem, 0.28rem 0.28rem;
+  background-repeat: no-repeat;
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 0.16rem 0.5rem;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg), white 35%);
+  cursor: pointer;
+  padding: 0.16rem 1.45rem 0.16rem 0.7rem;
   max-width: 11rem;
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+
+.addLane:hover {
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.addLane:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent);
+  outline: none;
+}
+
+.addLane option {
+  color: var(--ink);
+  background: var(--bg);
+  font-family: inherit;
 }
 
 .laneHint {
