@@ -13,3 +13,7 @@
 .toggle:hover {
   filter: brightness(0.97);
 }
+
+.toggleOff {
+  color: var(--ink-soft);
+}

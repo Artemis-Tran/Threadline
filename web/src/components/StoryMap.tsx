@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { EventSignificance } from "@pipeline/types";
 import type { CharacterView, EventView } from "../lib/asOf";
+import { useElementSmoothWheel } from "../hooks/useSmoothWheel";
 import {
   MAX_LANES,
   STORY_MAP_GEOMETRY as G,
@@ -67,6 +68,7 @@ export default function StoryMap({
   onSelectCharacter: (id: string) => void;
   chapterLabel: (index: number) => string;
 }) {
+  const mapScrollRef = useElementSmoothWheel<HTMLDivElement>("both");
   // Global significance filter; major is always on.
   const [sig, setSig] = useState({ moderate: false, minor: false });
   const visibleSignificance = useMemo<ReadonlySet<EventSignificance>>(
@@ -220,7 +222,7 @@ export default function StoryMap({
         </div>
       </div>
 
-      <div className={styles.mapScroll}>
+      <div ref={mapScrollRef} className={styles.mapScroll}>
         <div className={styles.mapInner} style={{ height: layout.totalHeight }}>
           <svg
             className={traced !== null ? styles.dimmed : undefined}

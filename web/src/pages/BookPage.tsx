@@ -17,9 +17,10 @@ import {
 } from "../lib/asOf";
 import type { NodeCatalog } from "../lib/graph";
 import CharactersTab from "../components/CharactersTab";
-import ThemeToggle from "../components/ThemeToggle";
+import DisplayToggles from "../components/DisplayToggles";
 import CharacterDetail from "../components/CharacterDetail";
 import TimelineTab from "../components/TimelineTab";
+import { getSmoothScrollEnabled } from "../lib/smoothScrollPreference";
 import styles from "./BookPage.module.css";
 
 type LoadState =
@@ -196,7 +197,7 @@ export default function BookPage() {
   const changeCap = useCallback((n: number) => updateParams((p) => p.set("upto", String(n)), true), [updateParams]);
   const selectCharacter = useCallback(
     (id: string) => {
-      window.scrollTo({ top: 0 });
+      window.scrollTo({ top: 0, behavior: getSmoothScrollEnabled() ? "smooth" : "auto" });
       updateParams((p) => {
         p.set("tab", "characters");
         p.set("character", id);
@@ -295,7 +296,7 @@ export default function BookPage() {
           <p className={styles.crumb}>
             <Link to="/">← Library</Link>
           </p>
-          <ThemeToggle />
+          <DisplayToggles />
         </div>
         <p className={styles.muted}>Loading…</p>
       </main>
@@ -308,7 +309,7 @@ export default function BookPage() {
           <p className={styles.crumb}>
             <Link to="/">← Library</Link>
           </p>
-          <ThemeToggle />
+          <DisplayToggles />
         </div>
         <p className={styles.muted}>
           {state.status === "missing"
@@ -331,7 +332,7 @@ export default function BookPage() {
         <p className={styles.crumb}>
           <Link to="/">← Library</Link>
         </p>
-        <ThemeToggle />
+        <DisplayToggles />
       </div>
       <h1 className={styles.title}>{thread.meta.bookTitle ?? thread.meta.slug}</h1>
 

@@ -11,7 +11,7 @@ import {
   type LibrarySummary,
 } from "../lib/db";
 import { downloadJson } from "../lib/download";
-import ThemeToggle from "../components/ThemeToggle";
+import DisplayToggles from "../components/DisplayToggles";
 import styles from "./LibraryPage.module.css";
 
 const REPO_URL = "https://github.com/Artemis-Tran/Threadline";
@@ -161,7 +161,7 @@ export default function LibraryPage() {
           <button className={styles.ghost} onClick={() => bundleInput.current?.click()} disabled={busy}>
             Import library
           </button>
-          <ThemeToggle />
+          <DisplayToggles />
         </div>
       </header>
 
