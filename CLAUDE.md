@@ -193,3 +193,20 @@ sessions know where things actually stand.
 - If something looks broken (empty output, malformed JSON, suspiciously
   short chapter text), stop and flag it rather than proceeding to the
   next stage on bad data.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues on `Artemis-Tran/Threadline`, via the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, used verbatim as label strings.
+See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root.
+See `docs/agents/domain.md`.

@@ -7,4 +7,8 @@ dist/
 # planning notes, and generated docs/reports.
 .claude
 plans
-docs
+docs/*
+# Exceptions: agent config and ADRs are repo-durable — CLAUDE.md points at
+# them, so they must survive a fresh clone.
+!docs/agents/
+!docs/adr/
