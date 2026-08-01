@@ -28,9 +28,15 @@ The running list of characters seen so far, carried into the next chapter's
 extraction as a hint so the same person isn't renamed mid-book. Deliberately
 lossy and never authoritative.
 
+**Extraction model**:
+The priced, registry-known identity an extraction run is pinned to. Exactly one
+per run, recorded by the manifest and by every chapter extract. The snapshot a
+vendor actually serves may differ from the requested identity; the run is named
+by what it requested.
+
 **Manifest**:
 The record of one extraction run over one book — what was extracted, skipped,
-or reused, which model did it, and what it cost.
+or reused, which extraction model it ran on, and what it cost.
 
 ### The thread
 

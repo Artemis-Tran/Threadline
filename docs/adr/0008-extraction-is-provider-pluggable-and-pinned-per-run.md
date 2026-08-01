@@ -1,0 +1,95 @@
+# Extraction is provider-pluggable, and a run is pinned to one model
+
+Extraction reaches a vendor through a single call seam,
+`src/extraction-call.ts`. It takes a resolved extraction model and returns a
+normalised result — text, the served model string, a stop reason, and token
+counts — so a caller never learns which vendor answered. Everything
+vendor-specific stops there: the SDK clients, the two request shapes, the two
+vocabularies for "it went wrong", and the error classes. The model registry is
+the authority on which vendor serves a row, stated per row rather than sniffed
+from an ID prefix, so the allowlist that already exists does not acquire a
+weaker rival.
+
+Stage 2 goes through the seam. Stage 3 still has its own Anthropic call path
+and rejects a non-Anthropic extraction model up front, before any charge. That
+is a deliberate staging of the work — wiring stage 3 up is gated on seeing real
+output from a second provider first.
+
+## One extraction model per run
+
+A run is pinned to exactly one extraction model, and stage 3 fails closed if
+`--model` would reuse chapter extracts written by a different one. It has to: a
+cached extract is loaded verbatim into the roster and never re-extracted, so
+mixing would blend two models' output invisibly. The escape hatches are
+`--out-dir` for a separate directory and `--force` to re-extract.
+
+The cost of this lands in exactly the situation multi-provider support was
+bought for. If a vendor goes down mid-book, the way to finish on the other one
+is a fresh output directory and re-paying for every chapter already extracted.
+A future reader who hits the reuse guard during an outage will assume it is a
+bug; it is not. Every stage checkpointing to disk (ADR-0006) makes a resumed
+run cheap *within* one model, and this is the boundary of that guarantee.
+
+## Considered options
+
+- **Mixed-vendor runs** — let one output directory hold chapters from more than
+  one vendor. Rejected. It turns a run-level fact into a per-chapter one; it
+  normalises the comparison tool's `"mixed"` sentinel, which exists to refuse
+  to price a directory rather than to describe a supported mode; and because
+  the roster carries earlier chapters' naming into later prompts, it drags one
+  vendor's conventions through another's chapters — a quality risk that leaves
+  no trace in the output.
+
+## A chapter extract records the requested model, not the served one
+
+Stage 2 stamps the registry ID that was *requested*, and keeps the vendor's
+returned string beside it.
+
+Stamping the returned string is the obvious thing, and it is what the code did
+before OpenAI existed here — so this needs saying, or it will be helpfully
+changed back. OpenAI resolves an alias to a dated snapshot in its response.
+Stamp that, and the extract records an ID the registry has never heard of:
+stage 3's reuse guard rejects its own cached extracts on the very next run, and
+the comparison tooling cannot price them, because both look the recorded string
+up in the registry. The requested ID is the one the registry can price and the
+one a resume can match. The served string is worth keeping only so that a
+silently re-pointed alias stays visible.
+
+Stage 3's own extracts still stamp the returned string, and record nothing
+alongside it. That is the same hazard, dormant — unremarked only because stage
+3 is Anthropic-only, and part of the work of putting stage 3 behind the seam.
+
+## Reasoning effort is pinned, at medium
+
+The OpenAI rows are called at medium reasoning effort. The pinning is the
+decision, not the value: medium happens to be GPT-5.6's own default, and "it's
+the default anyway, drop the parameter" is the simplification to resist.
+Reasoning tokens bill as output and spend the same budget the answer needs, so
+effort has to be a number the registry's output estimate is sized against, not
+whatever a vendor defaults to this quarter.
+
+Medium rather than low is contested and unmeasured, and should be read that
+way. The case for low is that extraction is mechanical read-and-structure work
+that deliberation cannot improve. The case for medium is that ADR-0004 found
+the cheap-model failure mode on this task to be roster noise — walk-ons
+promoted to characters, one person fragmented across several entries — which is
+a judgment failure rather than a transcription one, and deliberation is a
+plausible lever against it. Neither position has been tested; the first Luna
+probe settles it. ADR-0004 supports this choice rather than obstructing it, and
+its conclusion is untouched: Sonnet is still the default.
+
+## Consequences
+
+Effort spends against the only reason Luna's row exists. Luna earns it by
+costing roughly a twelfth of Sonnet's list rate on output — which is where
+reasoning tokens bill, at $1.20/MTok, eroding exactly that margin. The registry
+therefore assumes 12000 output tokens per chapter for the OpenAI rows, six
+times the Anthropic figure, so that the cost gate stays a ceiling. That
+estimate is unmeasured; one live chapter corrects it, and the vendor's reported
+output count already includes reasoning tokens, so no separate accounting is
+needed.
+
+Stage 2's token ceiling is 16000, and at medium effort the reasoning and the
+answer draw on it together, so a long chapter is likelier to come back
+truncated than it would at low effort. If a probe truncates, that is the cause,
+and it says nothing about the model's extraction quality.

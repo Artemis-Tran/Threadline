@@ -14,8 +14,10 @@ Pipeline stages 1–4 are complete and stage 5 has shipped. All five are
 verified against The Potter's Path.
 
 1. ✅ EPUB parsing → clean chapter text (`src/parse-epub.ts`)
-2. ✅ Single-chapter extraction, for eyeballing raw output (`src/extract-chapter.ts`)
-3. ✅ Per-chapter extraction with a running roster (`src/extract-book.ts`)
+2. ✅ Single-chapter extraction, for eyeballing raw output
+   (`src/extract-chapter.ts`) — runs on either provider, Anthropic or OpenAI
+3. ✅ Per-chapter extraction with a running roster (`src/extract-book.ts`) —
+   Anthropic-only; a non-Anthropic model is rejected before any API call
 4. ✅ Merge/dedupe across chapter extracts (`src/merge-thread.ts`) — writes
    `output/{slug}-thread.json`
 5. ✅ Static wiki SPA (`web/`) — chapter-cap browsing over Characters and a
@@ -58,8 +60,9 @@ provider-derived, so an Anthropic run never asks for one.
 ## Tech stack
 
 - Node.js + TypeScript, `tsx` to run, `epub2` for EPUB parsing
-- `@anthropic-ai/sdk` and `openai` for extraction, both used only behind
-  `src/extraction-call.ts`; `dotenv` for the API keys
+- `@anthropic-ai/sdk` and `openai` for extraction, behind the call seam in
+  `src/extraction-call.ts` apart from stage 3's own client (ADR-0008);
+  `dotenv` for the API keys
 - Web (`web/` only): Vite + React + react-router-dom (HashRouter), IndexedDB
   via `idb`, plain CSS modules. No Tailwind, no server, no SQLite/ORM.
 
