@@ -17,7 +17,7 @@ import {
   EVENT_SIGNIFICANCE,
 } from "./types";
 import { sanitizeName, sanitizeAliases, findIdentityMatch } from "./identity";
-import { DEFAULT_MODEL, resolveModel, ModelRates } from "./models";
+import { DEFAULT_MODEL, resolveModel, ModelInfo, ModelRates } from "./models";
 
 interface Totals {
   inputTokens: number;
@@ -37,11 +37,10 @@ const NON_NARRATIVE_TITLE =
 // isn't implemented in stage 3, so refuse rather than produce bad data.
 const MAX_CHAPTER_WORDS = 13000;
 
-// Rough token model for the confirmation gate; per-model $/MTok rates come from
-// the resolved model (see ./models).
+// Rough token model for the confirmation gate; per-model $/MTok rates and the
+// per-chapter output estimate come from the resolved model (see ./models).
 const EST_TOKENS_PER_WORD = 2.7;
 const EST_PROMPT_OVERHEAD_TOKENS = 1200;
-const EST_OUTPUT_TOKENS = 2000;
 
 const ROSTER_DESCRIPTION_MAX_CHARS = 150;
 const ROSTER_MAX_ALIASES = 8;
@@ -382,14 +381,26 @@ export function planChapters(book: ParsedBook, opts: CliOptions, chunksDir: stri
   });
 }
 
-export function estimateCostUsd(plans: ChapterPlan[], rates: ModelRates): number {
+export function estimateCostUsd(plans: ChapterPlan[], model: ModelInfo): number {
   const toExtract = plans.filter((p) => p.willExtract);
   const inputTokens = toExtract.reduce(
     (sum, p) => sum + p.chapter.wordCount * EST_TOKENS_PER_WORD + EST_PROMPT_OVERHEAD_TOKENS,
     0
   );
-  const outputTokens = toExtract.length * EST_OUTPUT_TOKENS;
-  return (inputTokens * rates.inputUsdPerMTok + outputTokens * rates.outputUsdPerMTok) / 1e6;
+  const outputTokens = toExtract.length * model.outputTokenEstimate;
+  return (inputTokens * model.rates.inputUsdPerMTok + outputTokens * model.rates.outputUsdPerMTok) / 1e6;
+}
+
+// Stage 3 still owns its own Anthropic call path — only stage 2 goes through the
+// extraction seam — so a registry row served by another vendor would end up as a
+// foreign model ID inside an Anthropic request. Reject it up front, where the
+// message can point somewhere useful, rather than partway into a book.
+export function assertProviderSupported(model: ModelInfo): void {
+  if (model.provider !== "anthropic") {
+    throw new Error(
+      `${model.id} is served by ${model.provider}, and extract-book only supports Anthropic models for now. Try it on a single chapter with extract-chapter instead.`
+    );
+  }
 }
 
 export function planStatus(p: ChapterPlan): string {
@@ -623,8 +634,9 @@ async function main() {
   const cachedCount = plans.filter((p) => p.narrative && !p.willExtract && p.hasCheckpoint).length;
   const pendingCount = plans.filter((p) => p.narrative && !p.willExtract && !p.hasCheckpoint).length;
   const skippedCount = plans.filter((p) => !p.narrative).length;
-  const rates = resolveModel(opts.model).rates;
-  const estCost = estimateCostUsd(plans, rates);
+  const model = resolveModel(opts.model);
+  assertProviderSupported(model);
+  const estCost = estimateCostUsd(plans, model);
 
   console.log(`Book: ${book.title ?? "(unknown)"} — ${book.chapterCount} flow items, ${book.wordCount} words`);
   printPlan(plans);
@@ -711,7 +723,7 @@ async function main() {
   console.log("-----------");
   console.log(`API calls:       ${totals.apiCalls}`);
   console.log(`Tokens:          ${totals.inputTokens} in / ${totals.outputTokens} out`);
-  console.log(`Actual cost:     ~$${costUsd(totals.inputTokens, totals.outputTokens, rates).toFixed(2)}`);
+  console.log(`Actual cost:     ~$${costUsd(totals.inputTokens, totals.outputTokens, model.rates).toFixed(2)}`);
   console.log(`Roster size:     ${roster.length} characters`);
   console.log(`Chunks dir:      ${chunksDir}`);
   console.log(`Manifest:        ${manifestPath}`);

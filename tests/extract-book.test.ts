@@ -15,12 +15,14 @@ import {
   readCheckpointCharacters,
   updateRoster,
   buildSystemPrompt,
+  assertProviderSupported,
   CliOptions,
 } from "../src/extract-book";
 import { ParsedBook, ParsedChapter, RosterEntry, ExtractedCharacter } from "../src/types";
 import { resolveModel } from "../src/models";
 
-const SONNET = resolveModel("claude-sonnet-5").rates;
+const SONNET_MODEL = resolveModel("claude-sonnet-5");
+const SONNET = SONNET_MODEL.rates;
 
 // --- fixtures ------------------------------------------------------------
 
@@ -113,7 +115,7 @@ describe("parseArgs", () => {
   });
 
   test("rejects an unknown or valueless --model", () => {
-    assert.throws(() => parseArgs(["book.json", "--model", "gpt-5"]), /Unknown model/);
+    assert.throws(() => parseArgs(["book.json", "--model", "gpt-5.6-sol"]), /Unknown model/);
     assert.throws(() => parseArgs(["book.json", "--model"]), /--model expects/);
   });
 
@@ -147,9 +149,39 @@ describe("costUsd / estimateCostUsd", () => {
       defaultOpts({ skip: new Set([1]) }),
       "/nonexistent-chunks-dir"
     );
-    // one chapter: (1000*2.7 + 1200) tokens in, 2000 out
+    // one chapter: (1000*2.7 + 1200) tokens in, 2000 out — the same numbers as
+    // before the output estimate moved onto the registry row.
     const expected = (3900 * 3 + 2000 * 15) / 1e6;
-    assert.ok(Math.abs(estimateCostUsd(plans, SONNET) - expected) < 1e-9);
+    assert.ok(Math.abs(estimateCostUsd(plans, SONNET_MODEL) - expected) < 1e-9);
+  });
+
+  test("estimateCostUsd budgets output from the model's own estimate", () => {
+    const plans = planChapters(
+      book([chapter(0, "Chapter 1", 1000)]),
+      defaultOpts(),
+      "/nonexistent-chunks-dir"
+    );
+    // A reasoning model spends more output per chapter, so the gate has to
+    // charge its row's estimate rather than a single global figure.
+    const luna = resolveModel("luna");
+    const expected = (3900 * 0.2 + luna.outputTokenEstimate * 1.2) / 1e6;
+    assert.ok(Math.abs(estimateCostUsd(plans, luna) - expected) < 1e-9);
+  });
+});
+
+// --- provider guard --------------------------------------------------------
+
+describe("assertProviderSupported", () => {
+  test("accepts an Anthropic model", () => {
+    assert.doesNotThrow(() => assertProviderSupported(SONNET_MODEL));
+  });
+
+  test("rejects a non-Anthropic model before the run reaches an API call", () => {
+    // The registry knows these rows, but stage 3 still builds Anthropic
+    // requests — so a whole-book run on one would be a foreign model ID inside
+    // an Anthropic call.
+    assert.throws(() => assertProviderSupported(resolveModel("luna")), /openai/);
+    assert.throws(() => assertProviderSupported(resolveModel("terra")), /extract-chapter/);
   });
 });
 
