@@ -40,17 +40,26 @@ npm run build -w web          # → web/dist
 ```
 
 Notable flags: `--model <id>` on the extraction commands (default
-`claude-sonnet-5`; shorthands `sonnet`/`haiku`/`opus`), `--out-dir <path>` on
-`extract-book`, and `--progression-order <path>` on `merge-thread`.
+`claude-sonnet-5`; shorthands `sonnet`/`haiku`/`opus`/`luna`/`terra`),
+`--out-dir <path>` on `extract-book`, and `--progression-order <path>` on
+`merge-thread`.
 
-`src/models.ts` is the model allowlist and pricing table. An unpriced or
-misspelled model is rejected before any API call, and reusing one model's
-cached extracts under a different `--model` fails closed.
+`src/models.ts` is the model allowlist, pricing table, and the authority on
+which vendor serves a row. An unpriced or misspelled model is rejected before
+any API call, and reusing one model's cached extracts under a different
+`--model` fails closed.
+
+`luna`/`terra` are OpenAI GPT-5.6 rows and run on **stage 2 only** — stage 3
+still has its own Anthropic call path and rejects a non-Anthropic model up
+front. Neither is a default; Sonnet still is (ADR-0004), and Luna's extraction
+quality is unmeasured. Both need `OPENAI_API_KEY`; the credential check is
+provider-derived, so an Anthropic run never asks for one.
 
 ## Tech stack
 
 - Node.js + TypeScript, `tsx` to run, `epub2` for EPUB parsing
-- `@anthropic-ai/sdk` for extraction; `dotenv` for the API key
+- `@anthropic-ai/sdk` and `openai` for extraction, both used only behind
+  `src/extraction-call.ts`; `dotenv` for the API keys
 - Web (`web/` only): Vite + React + react-router-dom (HashRouter), IndexedDB
   via `idb`, plain CSS modules. No Tailwind, no server, no SQLite/ORM.
 
@@ -95,7 +104,7 @@ cached extracts under a different `--model` fails closed.
 - Off-limits everywhere: authentication, any server or backend (static client
   hosting only), multi-user features, EPUB upload into the web app, and LLM
   calls from the web app. See ADR-0002 for why these aren't merely unbuilt.
-- Each stage of work is built, reviewed with `/review-git-diff`, and validated
+- Each stage of work is built, reviewed, and validated
   before moving on.
 
 ## Deferred work
