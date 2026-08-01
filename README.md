@@ -94,6 +94,22 @@ npm run extract-book -- output/your-book-parsed.json
 npm run merge-thread -- output/your-book-parsed.json
 ```
 
+**Trying a cheaper model.** Extraction defaults to `claude-sonnet-5`, but any
+command that hits the API takes `--model <id>` (a full id, or the shorthands
+`sonnet` / `haiku` / `opus`); each model is priced correctly in the cost
+estimate. Cheaper models (e.g. Haiku) cut cost several-fold but tend to
+produce noisier, less consistent rosters — so A/B before switching. Extract a
+candidate into a separate directory (so it doesn't overwrite your baseline)
+and diff the two:
+
+```
+npm run extract-book -- output/your-book-parsed.json --model haiku --out-dir output/your-book-chunks-haiku
+npm run compare-extractions -- output/your-book-chunks output/your-book-chunks-haiku --label-a sonnet --label-b haiku
+```
+
+The comparison reports per-chapter counts, roster differences, and each run's
+real cost.
+
 ### 4. Load the thread into the web app
 
 ```
@@ -137,14 +153,16 @@ deep links work) and remembered per-book across visits.
 | `npm run extract -- output/book-parsed.json <index\|--list>` | Extract/inspect a single chapter |
 | `npm run extract-book -- output/book-parsed.json [flags]` | Full-book extraction (`--dry-run` previews cost) |
 | `npm run merge-thread -- output/book-parsed.json [flags]` | Merge chunks into the thread |
+| `npm run compare-extractions -- <dirA> <dirB>` | A/B two chunk dirs (counts, roster, cost) |
 | `npm run web` | Run the web app dev server |
 | `npm test` | Run the pipeline test suite (no API calls) |
 | `npm run test:web` | Run the web test suite |
 | `npm run build` | Compile the pipeline TypeScript to `dist/` |
 
 Useful `extract-book` flags: `--from N` / `--to N` / `--skip 3,5`
-`--force [12,13]` / `--yes` / `--rebuild-manifest`. Useful `merge-thread` /
-`book` flags: `--out <path>` / `--progression-order <path>`.
+`--force [12,13]` / `--yes` / `--rebuild-manifest` / `--model <id>` /
+`--out-dir <path>`. Useful `merge-thread` / `book` flags: `--out <path>` /
+`--progression-order <path>`. `book` also accepts `--model <id>`.
 
 ---
 

@@ -33,6 +33,25 @@ Pipeline stages, in order:
    repaired by a mechanical cleanup pass, marked `meta.postProcessed`
    in each chunk; the roster-contamination bug that caused it is fixed
    in the script, so future books won't need it.
+   The extraction model is configurable via `--model <id>` on
+   `extract-book`/`extract-chapter`/`book` (default `claude-sonnet-5`;
+   shorthands `sonnet`/`haiku`/`opus`). The registry + per-model pricing
+   live in `src/models.ts` and act as an allowlist, so the cost gate and
+   manifest stay honest and an unpriced/misspelled model is rejected
+   before any API call. `extract-book` also takes `--out-dir <path>` to
+   redirect the chunks output, and a cross-model guard refuses to reuse
+   one model's cached checkpoints under a different `--model` (fails
+   closed before spending). `src/compare-extractions.ts`
+   (`npm run compare-extractions -- <dirA> <dirB>`) A/B-diffs two chunk
+   dirs — per-chapter counts, roster differences, and each run's real
+   cost (priced from summed per-chunk usage, so resumed/rebuilt runs are
+   accurate). A Haiku-vs-Sonnet A/B on The Potter's Path found Haiku
+   ~7× cheaper ($0.54 vs $3.95) but noisier — background walk-ons
+   promoted to characters and more name fragmentation
+   (e.g. `Merrick` split from `Davos Merrick`), which loads the
+   merge/identity stage — so Sonnet stays the default; a prompt tweak
+   suppressing unnamed background figures is the untried lever if Haiku's
+   cost is wanted.
    A freeform, per-book "system" data extraction field was scoped in
    `plans/system-data-schema-plan.md` but deferred — untouched for now.)
 4. ✅ Entity merge/dedupe pass across chunks
@@ -151,9 +170,12 @@ sessions know where things actually stand.
   history for the breakdown). Prefer testing extraction logic on a single
   chapter before running it across a whole book, and a single book before
   running it across a batch.
-- Prefer Sonnet for extraction quality/cost balance; only reach for Opus
-  if there's a specific reasoning failure Sonnet can't handle. Don't
-  default to the most expensive model.
+- The extraction model is selectable via `--model` (see stage 3);
+  default and recommended is Sonnet for the quality/cost balance. Cheaper
+  models (Haiku) work but produce noisier rosters — A/B with
+  `compare-extractions` before switching a book. Only reach for Opus if
+  there's a specific reasoning failure Sonnet can't handle. Don't default
+  to the most expensive model.
 
 ## Guardrails for Claude Code sessions
 - Scope each session to one pipeline stage at a time (use `/goal` to hold
