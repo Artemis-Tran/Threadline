@@ -57,6 +57,12 @@ describe("routeArgs", () => {
     assert.deepEqual(r.extractArgs, ["--to", "3", "--yes"]);
   });
 
+  test("routes --model to the extract stage", () => {
+    const r = routeArgs(["book.epub", "--model", "haiku"]);
+    assert.deepEqual(r.extractArgs, ["--model", "haiku"]);
+    assert.deepEqual(r.mergeArgs, []);
+  });
+
   test("rejects a missing epub path", () => {
     assert.throws(() => routeArgs([]), /Usage/);
     assert.throws(() => routeArgs(["--yes"]), /Usage/);

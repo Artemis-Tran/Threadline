@@ -17,6 +17,7 @@ import {
   EVENT_SIGNIFICANCE,
 } from "./types";
 import { sanitizeName, sanitizeAliases, findIdentityMatch } from "./identity";
+import { DEFAULT_MODEL, resolveModel, ModelRates } from "./models";
 
 interface Totals {
   inputTokens: number;
@@ -24,7 +25,6 @@ interface Totals {
   apiCalls: number;
 }
 
-const MODEL = "claude-sonnet-5";
 const MAX_TOKENS = 16000;
 
 // Selection heuristic: word count alone misses prose-length non-narrative
@@ -37,12 +37,11 @@ const NON_NARRATIVE_TITLE =
 // isn't implemented in stage 3, so refuse rather than produce bad data.
 const MAX_CHAPTER_WORDS = 13000;
 
-// Rough cost model for the confirmation gate (Sonnet: $3/$15 per MTok).
+// Rough token model for the confirmation gate; per-model $/MTok rates come from
+// the resolved model (see ./models).
 const EST_TOKENS_PER_WORD = 2.7;
 const EST_PROMPT_OVERHEAD_TOKENS = 1200;
 const EST_OUTPUT_TOKENS = 2000;
-const INPUT_USD_PER_MTOK = 3;
-const OUTPUT_USD_PER_MTOK = 15;
 
 const ROSTER_DESCRIPTION_MAX_CHARS = 150;
 const ROSTER_MAX_ALIASES = 8;
@@ -189,10 +188,54 @@ export function indexFromCheckpoint(outPath: string): string {
   return match ? String(Number(match[1])) : "<index>";
 }
 
+// The model a checkpoint was extracted with (from its meta). Null when the file
+// is unreadable or predates model stamping — callers treat null as "can't
+// verify" rather than a mismatch, so legacy checkpoints aren't force-invalidated.
+export function readCheckpointModel(outPath: string): string | null {
+  try {
+    const meta = (JSON.parse(fs.readFileSync(outPath, "utf-8")) as { meta?: { model?: unknown } }).meta;
+    return typeof meta?.model === "string" ? meta.model : null;
+  } catch {
+    return null;
+  }
+}
+
+// Guard against silently mixing models in one chunks dir. A cached checkpoint is
+// loaded verbatim into the roster and never re-extracted, so pointing --model X
+// at a dir whose checkpoints were written by model Y would blend the two — and
+// writeManifest would then stamp X over the whole run. Only checkpoints that
+// will be LOADED from cache are checked; chapters being re-extracted overwrite
+// theirs. Runs before any API call, so a mismatch costs nothing.
+export function assertCheckpointModelsMatch(
+  plans: ChapterPlan[],
+  chunksDir: string,
+  model: string,
+  rebuildMode = false
+): void {
+  const conflicts: string[] = [];
+  for (const p of plans) {
+    if (!p.narrative || !p.hasCheckpoint) continue;
+    // In a normal run, willExtract chapters are re-extracted (overwriting their
+    // checkpoint), so their recorded model is irrelevant. In --rebuild-manifest
+    // mode nothing is extracted — even a forced index is loaded from cache — so
+    // every cached checkpoint must match the model the manifest will claim.
+    if (!rebuildMode && p.willExtract) continue;
+    const found = readCheckpointModel(checkpointPath(chunksDir, p.chapter.index));
+    if (found !== null && found !== model) conflicts.push(`idx ${p.chapter.index} (${found})`);
+  }
+  if (conflicts.length > 0) {
+    const shown = conflicts.slice(0, 5).join(", ") + (conflicts.length > 5 ? `, … (+${conflicts.length - 5} more)` : "");
+    throw new Error(
+      `Model mismatch: --model ${model} would reuse ${conflicts.length} checkpoint(s) from a different model — ${shown}. ` +
+        `Use --out-dir to write this model's run to a separate directory, or --force to re-extract those chapters.`
+    );
+  }
+}
+
 // Single source of truth for token → USD, rounded to cents, so the console
 // summary and the persisted manifest can never disagree.
-export function costUsd(inputTokens: number, outputTokens: number): number {
-  return Math.round((inputTokens * INPUT_USD_PER_MTOK + outputTokens * OUTPUT_USD_PER_MTOK) / 1e4) / 100;
+export function costUsd(inputTokens: number, outputTokens: number, rates: ModelRates): number {
+  return Math.round((inputTokens * rates.inputUsdPerMTok + outputTokens * rates.outputUsdPerMTok) / 1e4) / 100;
 }
 
 export interface CliOptions {
@@ -205,6 +248,12 @@ export interface CliOptions {
   forceIndices: Set<number>;
   yes: boolean;
   rebuildManifest: boolean;
+  // Resolved model ID (see ./models). Defaults to DEFAULT_MODEL when --model is
+  // omitted, so a no-flag run is unchanged.
+  model: string;
+  // Override for the chunks output dir. Null = the default output/{slug}-chunks.
+  // Lets an A/B run write elsewhere without clobbering the baseline's chunks.
+  outDir: string | null;
 }
 
 function parseIndexList(value: string, flag: string): number[] {
@@ -225,6 +274,8 @@ export function parseArgs(argv: string[]): CliOptions {
     forceIndices: new Set(),
     yes: false,
     rebuildManifest: false,
+    model: DEFAULT_MODEL,
+    outDir: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -260,6 +311,18 @@ export function parseArgs(argv: string[]): CliOptions {
       case "--rebuild-manifest":
         opts.rebuildManifest = true;
         break;
+      case "--model": {
+        const value = argv[++i];
+        if (!value) throw new Error("--model expects a model name");
+        opts.model = resolveModel(value).id;
+        break;
+      }
+      case "--out-dir": {
+        const value = argv[++i];
+        if (!value || value.startsWith("--")) throw new Error("--out-dir expects a path");
+        opts.outDir = value;
+        break;
+      }
       default:
         if (arg.startsWith("--")) throw new Error(`Unknown flag: ${arg}`);
         if (opts.parsedJsonPath) throw new Error(`Unexpected argument: ${arg}`);
@@ -269,7 +332,7 @@ export function parseArgs(argv: string[]): CliOptions {
 
   if (!opts.parsedJsonPath) {
     throw new Error(
-      "Usage: tsx src/extract-book.ts <parsed-json-path> [--from N] [--to N] [--skip 11,28] [--dry-run] [--force [12,13]] [--yes] [--rebuild-manifest]"
+      "Usage: tsx src/extract-book.ts <parsed-json-path> [--from N] [--to N] [--skip 11,28] [--dry-run] [--force [12,13]] [--yes] [--rebuild-manifest] [--model <id>] [--out-dir <path>]"
     );
   }
   if (opts.from !== null && opts.to !== null && opts.from > opts.to) {
@@ -319,14 +382,14 @@ export function planChapters(book: ParsedBook, opts: CliOptions, chunksDir: stri
   });
 }
 
-export function estimateCostUsd(plans: ChapterPlan[]): number {
+export function estimateCostUsd(plans: ChapterPlan[], rates: ModelRates): number {
   const toExtract = plans.filter((p) => p.willExtract);
   const inputTokens = toExtract.reduce(
     (sum, p) => sum + p.chapter.wordCount * EST_TOKENS_PER_WORD + EST_PROMPT_OVERHEAD_TOKENS,
     0
   );
   const outputTokens = toExtract.length * EST_OUTPUT_TOKENS;
-  return (inputTokens * INPUT_USD_PER_MTOK + outputTokens * OUTPUT_USD_PER_MTOK) / 1e6;
+  return (inputTokens * rates.inputUsdPerMTok + outputTokens * rates.outputUsdPerMTok) / 1e6;
 }
 
 export function planStatus(p: ChapterPlan): string {
@@ -372,9 +435,10 @@ function writeManifest(
   complete: boolean,
   fileName: string = MANIFEST_FILE
 ): void {
+  const rates = resolveModel(opts.model).rates;
   const manifest = {
     meta: {
-      model: MODEL,
+      model: opts.model,
       parsedJsonPath: path.resolve(opts.parsedJsonPath),
       bookTitle: book.title,
       timestamp: new Date().toISOString(),
@@ -382,7 +446,7 @@ function writeManifest(
       apiCalls: totals.apiCalls,
       totalInputTokens: totals.inputTokens,
       totalOutputTokens: totals.outputTokens,
-      actualCostUsd: costUsd(totals.inputTokens, totals.outputTokens),
+      actualCostUsd: costUsd(totals.inputTokens, totals.outputTokens, rates),
       rosterSize: roster.length,
     },
     chapters: manifestChapters,
@@ -396,12 +460,13 @@ async function extractChapter(
   book: ParsedBook,
   chapter: ParsedChapter,
   roster: RosterEntry[],
-  outPath: string
+  outPath: string,
+  model: string
 ): Promise<{ extraction: Extraction; usage: Anthropic.Usage }> {
   const systemPrompt = buildSystemPrompt(book.title, roster);
 
   const response = await client.messages.create({
-    model: MODEL,
+    model,
     max_tokens: MAX_TOKENS,
     system: systemPrompt,
     output_config: {
@@ -483,7 +548,8 @@ async function processChapters(
   roster: RosterEntry[],
   manifestChapters: ManifestChapterEntry[],
   totals: Totals,
-  toExtractCount: number
+  toExtractCount: number,
+  model: string
 ): Promise<void> {
   let extractedSoFar = 0;
 
@@ -509,7 +575,7 @@ async function processChapters(
       let extraction: Extraction;
       let usage: Anthropic.Usage;
       try {
-        ({ extraction, usage } = await extractChapter(client, book, chapter, roster, outPath));
+        ({ extraction, usage } = await extractChapter(client, book, chapter, roster, outPath, model));
       } catch (err) {
         // The prefix above has no newline; terminate the dangling line so the
         // failure message that follows isn't glued onto it.
@@ -544,20 +610,27 @@ async function main() {
   const book: ParsedBook = JSON.parse(fs.readFileSync(opts.parsedJsonPath, "utf-8"));
 
   const slug = deriveSlug(opts.parsedJsonPath);
-  const chunksDir = path.resolve(__dirname, "..", "output", `${slug}-chunks`);
+  const chunksDir = opts.outDir
+    ? path.resolve(opts.outDir)
+    : path.resolve(__dirname, "..", "output", `${slug}-chunks`);
 
   const plans = planChapters(book, opts, chunksDir);
+  // Fail fast (before any API call) if this model would reuse another model's
+  // cached checkpoints from this dir. In --rebuild-manifest mode every cached
+  // checkpoint is loaded (even forced indices), so check them all.
+  assertCheckpointModelsMatch(plans, chunksDir, opts.model, opts.rebuildManifest);
   const toExtract = plans.filter((p) => p.willExtract);
   const cachedCount = plans.filter((p) => p.narrative && !p.willExtract && p.hasCheckpoint).length;
   const pendingCount = plans.filter((p) => p.narrative && !p.willExtract && !p.hasCheckpoint).length;
   const skippedCount = plans.filter((p) => !p.narrative).length;
-  const estCost = estimateCostUsd(plans);
+  const rates = resolveModel(opts.model).rates;
+  const estCost = estimateCostUsd(plans, rates);
 
   console.log(`Book: ${book.title ?? "(unknown)"} — ${book.chapterCount} flow items, ${book.wordCount} words`);
   printPlan(plans);
   console.log("");
   console.log(
-    `${toExtract.length} chapters to extract (${cachedCount} cached, ${pendingCount} pending, ${skippedCount} skipped) — estimated cost ~$${estCost.toFixed(2)} with ${MODEL}`
+    `${toExtract.length} chapters to extract (${cachedCount} cached, ${pendingCount} pending, ${skippedCount} skipped) — estimated cost ~$${estCost.toFixed(2)} with ${opts.model}`
   );
 
   // Dry-run wins over every other mode: preview only, never touch disk.
@@ -576,7 +649,7 @@ async function main() {
     const roster: RosterEntry[] = [];
     const manifestChapters: ManifestChapterEntry[] = [];
     const totals: Totals = { inputTokens: 0, outputTokens: 0, apiCalls: 0 };
-    await processChapters(plans, chunksDir, book, null, roster, manifestChapters, totals, 0);
+    await processChapters(plans, chunksDir, book, null, roster, manifestChapters, totals, 0, opts.model);
     writeManifest(chunksDir, opts, book, manifestChapters, roster, totals, true);
     console.log(`Manifest rebuilt from ${manifestChapters.filter((c) => c.status === "from-cache").length} cached chunks — no API calls made.`);
     return;
@@ -618,7 +691,7 @@ async function main() {
 
   const runStart = performance.now();
   try {
-    await processChapters(plans, chunksDir, book, client, roster, manifestChapters, totals, toExtract.length);
+    await processChapters(plans, chunksDir, book, client, roster, manifestChapters, totals, toExtract.length, opts.model);
   } catch (err) {
     // Persist progress to a side file rather than clobbering a possibly-complete
     // manifest.json with a truncated one; a rerun resumes from the checkpoints.
@@ -638,7 +711,7 @@ async function main() {
   console.log("-----------");
   console.log(`API calls:       ${totals.apiCalls}`);
   console.log(`Tokens:          ${totals.inputTokens} in / ${totals.outputTokens} out`);
-  console.log(`Actual cost:     ~$${costUsd(totals.inputTokens, totals.outputTokens).toFixed(2)}`);
+  console.log(`Actual cost:     ~$${costUsd(totals.inputTokens, totals.outputTokens, rates).toFixed(2)}`);
   console.log(`Roster size:     ${roster.length} characters`);
   console.log(`Chunks dir:      ${chunksDir}`);
   console.log(`Manifest:        ${manifestPath}`);

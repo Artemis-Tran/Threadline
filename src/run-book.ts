@@ -17,15 +17,15 @@ export interface RoutedArgs {
 }
 
 // Flags that take a following value, grouped by the stage they belong to.
-const EXTRACT_VALUE_FLAGS = new Set(["--from", "--to", "--skip"]);
+const EXTRACT_VALUE_FLAGS = new Set(["--from", "--to", "--skip", "--model"]);
 const MERGE_VALUE_FLAGS = new Set(["--out", "--progression-order"]);
 // Value-less extract flags.
 const EXTRACT_BOOL_FLAGS = new Set(["--yes", "--rebuild-manifest"]);
 
 const USAGE =
   "Usage: npm run book -- <path-to-epub> [--from N] [--to N] [--skip 11,28] " +
-  "[--force [12,13]] [--rebuild-manifest] [--yes] [--dry-run] [--out <path>] " +
-  "[--progression-order <path>]";
+  "[--force [12,13]] [--rebuild-manifest] [--yes] [--dry-run] [--model <id>] " +
+  "[--out <path>] [--progression-order <path>]";
 
 // Split the orchestrator's argv into the epub path plus per-stage flag lists.
 // Kept pure (throws on bad input, no IO) so it's unit-testable. --dry-run is

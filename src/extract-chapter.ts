@@ -3,8 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as path from "path";
 import { ParsedBook, deriveSlug } from "./types";
+import { DEFAULT_MODEL, resolveModel } from "./models";
 
-const MODEL = "claude-sonnet-5";
 const MAX_TOKENS = 16000;
 
 // role/significance stay free-text in this probe: book-level judgments like
@@ -68,13 +68,52 @@ export function buildSystemPrompt(bookTitle: string | null): string {
   ].join(" ");
 }
 
+const USAGE = "Usage: tsx src/extract-chapter.ts <parsed-json-path> <chapter-index|--list> [--model <id>]";
+
+export interface ChapterCliArgs {
+  parsedJsonPath: string;
+  chapterArg: string; // a numeric index, or the literal "--list"
+  model: string;
+}
+
+// Pure so the guard is unit-testable: --model is pulled out (anywhere on the
+// line), --list is an allowed positional, any other --flag is rejected, and
+// exactly two positionals are required. Throwing here — instead of silently
+// dropping a misspelled flag — stops a typo'd --model from reaching the paid
+// API call with the default model.
+export function parseChapterArgs(argv: string[]): ChapterCliArgs {
+  let model = DEFAULT_MODEL;
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--model") {
+      const value = argv[++i];
+      if (!value) throw new Error("--model expects a model name");
+      model = resolveModel(value).id;
+    } else if (arg === "--list") {
+      positionals.push(arg);
+    } else if (arg.startsWith("--")) {
+      throw new Error(`Unknown flag: ${arg}`);
+    } else {
+      positionals.push(arg);
+    }
+  }
+  if (positionals.length !== 2) throw new Error(USAGE);
+  return { parsedJsonPath: positionals[0], chapterArg: positionals[1], model };
+}
+
 async function main() {
-  const [parsedJsonPath, chapterIndexArg] = process.argv.slice(2);
-  if (!parsedJsonPath || chapterIndexArg === undefined) {
-    console.error("Usage: tsx src/extract-chapter.ts <parsed-json-path> <chapter-index|--list>");
+  let parsedJsonPath: string;
+  let chapterIndexArg: string;
+  let model: string;
+  try {
+    ({ parsedJsonPath, chapterArg: chapterIndexArg, model } = parseChapterArgs(process.argv.slice(2)));
+  } catch (err) {
+    console.error((err as Error).message);
     process.exitCode = 1;
     return;
   }
+
   if (!fs.existsSync(parsedJsonPath)) {
     console.error(`File not found: ${parsedJsonPath}`);
     process.exitCode = 1;
@@ -118,10 +157,10 @@ async function main() {
   const systemPrompt = buildSystemPrompt(book.title);
   const client = new Anthropic();
 
-  console.log(`Extracting chapter ${chapterIndex} (${chapter.wordCount} words) with ${MODEL} ...`);
+  console.log(`Extracting chapter ${chapterIndex} (${chapter.wordCount} words) with ${model} ...`);
 
   const response = await client.messages.create({
-    model: MODEL,
+    model,
     max_tokens: MAX_TOKENS,
     system: systemPrompt,
     output_config: {

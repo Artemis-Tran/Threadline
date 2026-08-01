@@ -10,6 +10,7 @@ import {
   estimateCostUsd,
   costUsd,
   checkpointPath,
+  assertCheckpointModelsMatch,
   indexFromCheckpoint,
   readCheckpointCharacters,
   updateRoster,
@@ -17,6 +18,9 @@ import {
   CliOptions,
 } from "../src/extract-book";
 import { ParsedBook, ParsedChapter, RosterEntry, ExtractedCharacter } from "../src/types";
+import { resolveModel } from "../src/models";
+
+const SONNET = resolveModel("claude-sonnet-5").rates;
 
 // --- fixtures ------------------------------------------------------------
 
@@ -31,6 +35,8 @@ function defaultOpts(overrides: Partial<CliOptions> = {}): CliOptions {
     forceIndices: new Set(),
     yes: false,
     rebuildManifest: false,
+    model: "claude-sonnet-5",
+    outDir: null,
     ...overrides,
   };
 }
@@ -99,16 +105,40 @@ describe("parseArgs", () => {
     assert.throws(() => parseArgs(["b", "--frob"]), /Unknown flag/);
     assert.throws(() => parseArgs(["a", "b"]), /Unexpected argument/);
   });
+
+  test("defaults to Sonnet and resolves --model aliases and full IDs", () => {
+    assert.equal(parseArgs(["book.json"]).model, "claude-sonnet-5");
+    assert.equal(parseArgs(["book.json", "--model", "haiku"]).model, "claude-haiku-4-5");
+    assert.equal(parseArgs(["book.json", "--model", "claude-opus-4-8"]).model, "claude-opus-4-8");
+  });
+
+  test("rejects an unknown or valueless --model", () => {
+    assert.throws(() => parseArgs(["book.json", "--model", "gpt-5"]), /Unknown model/);
+    assert.throws(() => parseArgs(["book.json", "--model"]), /--model expects/);
+  });
+
+  test("--out-dir overrides the chunks dir; defaults to null", () => {
+    assert.equal(parseArgs(["book.json"]).outDir, null);
+    assert.equal(parseArgs(["book.json", "--out-dir", "output/ab-haiku"]).outDir, "output/ab-haiku");
+    assert.throws(() => parseArgs(["book.json", "--out-dir"]), /--out-dir expects/);
+    assert.throws(() => parseArgs(["book.json", "--out-dir", "--yes"]), /--out-dir expects/);
+  });
 });
 
 // --- cost math -------------------------------------------------------------
 
 describe("costUsd / estimateCostUsd", () => {
-  test("costUsd applies $3/$15 per MTok, rounded to cents", () => {
-    assert.equal(costUsd(1_000_000, 0), 3);
-    assert.equal(costUsd(0, 1_000_000), 15);
-    assert.equal(costUsd(1000, 1000), 0.02); // $0.018 rounds to 2 cents
-    assert.equal(costUsd(0, 0), 0);
+  test("costUsd applies the model's $/MTok rates, rounded to cents", () => {
+    assert.equal(costUsd(1_000_000, 0, SONNET), 3);
+    assert.equal(costUsd(0, 1_000_000, SONNET), 15);
+    assert.equal(costUsd(1000, 1000, SONNET), 0.02); // $0.018 rounds to 2 cents
+    assert.equal(costUsd(0, 0, SONNET), 0);
+  });
+
+  test("costUsd tracks per-model rates (Haiku is cheaper than Sonnet)", () => {
+    const haiku = resolveModel("haiku").rates;
+    assert.equal(costUsd(1_000_000, 0, haiku), 1);
+    assert.equal(costUsd(0, 1_000_000, haiku), 5);
   });
 
   test("estimateCostUsd counts only willExtract chapters", () => {
@@ -119,7 +149,7 @@ describe("costUsd / estimateCostUsd", () => {
     );
     // one chapter: (1000*2.7 + 1200) tokens in, 2000 out
     const expected = (3900 * 3 + 2000 * 15) / 1e6;
-    assert.ok(Math.abs(estimateCostUsd(plans) - expected) < 1e-9);
+    assert.ok(Math.abs(estimateCostUsd(plans, SONNET) - expected) < 1e-9);
   });
 });
 
@@ -134,6 +164,60 @@ describe("checkpointPath / indexFromCheckpoint", () => {
   test("indexFromCheckpoint recovers the index for --force hints", () => {
     assert.equal(indexFromCheckpoint("/chunks/idx012-extract.json"), "12");
     assert.equal(indexFromCheckpoint("/chunks/unrelated.json"), "<index>");
+  });
+});
+
+// --- cross-model checkpoint guard -----------------------------------------
+
+describe("assertCheckpointModelsMatch", () => {
+  const chapters = [chapter(0, "Chapter 1", 1500)];
+
+  function withCheckpoint(model: string | null, run: (dir: string) => void): void {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-model-"));
+    try {
+      const body =
+        model === null ? "{}" : JSON.stringify({ meta: { model }, extraction: { characters: [] } });
+      fs.writeFileSync(checkpointPath(dir, 0), body);
+      run(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("passes when a cached checkpoint's model matches --model", () => {
+    withCheckpoint("claude-sonnet-5", (dir) => {
+      const plans = planChapters(book(chapters), defaultOpts(), dir);
+      assert.doesNotThrow(() => assertCheckpointModelsMatch(plans, dir, "claude-sonnet-5"));
+    });
+  });
+
+  test("throws when a cached checkpoint was written by a different model", () => {
+    withCheckpoint("claude-sonnet-5", (dir) => {
+      const plans = planChapters(book(chapters), defaultOpts(), dir);
+      assert.throws(() => assertCheckpointModelsMatch(plans, dir, "claude-haiku-4-5"), /Model mismatch/);
+    });
+  });
+
+  test("ignores a legacy checkpoint with no model stamp", () => {
+    withCheckpoint(null, (dir) => {
+      const plans = planChapters(book(chapters), defaultOpts(), dir);
+      assert.doesNotThrow(() => assertCheckpointModelsMatch(plans, dir, "claude-haiku-4-5"));
+    });
+  });
+
+  test("does not check checkpoints that will be re-extracted (--force)", () => {
+    withCheckpoint("claude-sonnet-5", (dir) => {
+      const plans = planChapters(book(chapters), defaultOpts({ forceAll: true }), dir);
+      assert.doesNotThrow(() => assertCheckpointModelsMatch(plans, dir, "claude-haiku-4-5"));
+    });
+  });
+
+  test("in rebuild mode, forced-index checkpoints are loaded from cache so they ARE checked", () => {
+    withCheckpoint("claude-sonnet-5", (dir) => {
+      const plans = planChapters(book(chapters), defaultOpts({ forceAll: true }), dir);
+      // rebuildMode = true: nothing is extracted, so a mismatched forced index must still throw.
+      assert.throws(() => assertCheckpointModelsMatch(plans, dir, "claude-haiku-4-5", true), /Model mismatch/);
+    });
   });
 });
 
