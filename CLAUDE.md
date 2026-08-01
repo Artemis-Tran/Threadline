@@ -100,10 +100,16 @@ cached extracts under a different `--model` fails closed.
 
 ## Deferred work
 
-Two ideas are scoped but unbuilt, in `plans/system-data-schema-plan.md` (a
-freeform per-book "system"/progression extraction field) and
-`plans/deferred-ideas.md`. **`plans/` is gitignored** — these exist only on
-one machine and are due to become GitHub issues.
+Tracked work lives on the issue tracker. Everything else sits in
+`plans/deferred-ideas.md` and `plans/system-data-schema-plan.md` — roughly
+eight parked ideas, mostly a single-file HTML thread export, a whole-book
+relationship graph, prose search, and library-scaling polish.
+
+**`plans/` is gitignored**, so those exist on one machine only and are not
+readable from a clone. Treat them as stale until checked: known-wrong entries
+include a theme toggle listed as unbuilt (it shipped) and a chapter-numbering
+heuristic that was never implemented. Verify against the code before acting on
+anything in there, and move an idea to the tracker when it gets picked up.
 
 ## Agent skills
 
