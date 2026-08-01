@@ -23,7 +23,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
     "dotenv": "^16.4.5",
-    "epub2": "^3.0.2"
+    "epub2": "^3.0.2",
+    "openai": "^7.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

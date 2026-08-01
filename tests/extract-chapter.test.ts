@@ -46,8 +46,15 @@ describe("extract-chapter parseChapterArgs", () => {
     assert.throws(() => parseChapterArgs(["book.json", "8", "--modle", "haiku"]), /Unknown flag: --modle/);
   });
 
+  test("resolves the OpenAI shorthands", () => {
+    assert.equal(parseChapterArgs(["book.json", "8", "--model", "luna"]).model, "gpt-5.6-luna");
+    assert.equal(parseChapterArgs(["book.json", "8", "--model", "terra"]).model, "gpt-5.6-terra");
+  });
+
   test("rejects unknown models, a valueless --model, and wrong arg counts", () => {
-    assert.throws(() => parseChapterArgs(["book.json", "8", "--model", "gpt-5"]), /Unknown model/);
+    // gpt-5.6-sol is a real model the registry deliberately omits, so this also
+    // pins the allowlist as an allowlist rather than a vendor-prefix check.
+    assert.throws(() => parseChapterArgs(["book.json", "8", "--model", "gpt-5.6-sol"]), /Unknown model/);
     assert.throws(() => parseChapterArgs(["book.json", "8", "--model"]), /--model expects/);
     assert.throws(() => parseChapterArgs(["book.json"]), /Usage:/);
     assert.throws(() => parseChapterArgs(["book.json", "8", "9"]), /Usage:/);

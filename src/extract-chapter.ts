@@ -1,10 +1,9 @@
 import "dotenv/config";
-import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as path from "path";
 import { ParsedBook, deriveSlug } from "./types";
 import { DEFAULT_MODEL, resolveModel } from "./models";
-import { callExtraction } from "./extraction-call";
+import { apiErrorMessage, apiKeyEnvVar, callExtraction } from "./extraction-call";
 
 const MAX_TOKENS = 16000;
 
@@ -133,8 +132,13 @@ async function main() {
     return;
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error("ANTHROPIC_API_KEY is not set. Add it to .env before running extraction.");
+  // Only the chosen model's vendor needs a credential — an OpenAI run must not
+  // demand an Anthropic key, or the reverse. resolveModel is idempotent on an
+  // already-resolved ID, so re-resolving here just recovers the registry row.
+  const { provider } = resolveModel(model);
+  const apiKeyVar = apiKeyEnvVar(provider);
+  if (!process.env[apiKeyVar]) {
+    console.error(`${apiKeyVar} is not set. Add it to .env before running extraction.`);
     process.exitCode = 1;
     return;
   }
@@ -161,6 +165,7 @@ async function main() {
 
   const result = await callExtraction({
     model,
+    provider,
     systemPrompt,
     chapterText: chapter.text,
     schema: EXTRACTION_SCHEMA,
@@ -242,8 +247,11 @@ async function main() {
 // imported by the test suite, which must not trigger a real run.
 if (require.main === module) {
   main().catch((err) => {
-    if (err instanceof Anthropic.APIError) {
-      console.error(`API error ${err.status}: ${err.message}`);
+    // Which vendor's error class this is stays behind the seam — the handler
+    // asks for a description and falls through only for a genuine bug.
+    const apiError = apiErrorMessage(err);
+    if (apiError) {
+      console.error(apiError);
     } else {
       console.error("Extraction failed:", err);
     }
