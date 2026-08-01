@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ParsedBook, deriveSlug } from "./types";
 import { DEFAULT_MODEL, resolveModel } from "./models";
+import { callExtraction } from "./extraction-call";
 
 const MAX_TOKENS = 16000;
 
@@ -155,48 +156,44 @@ async function main() {
   }
 
   const systemPrompt = buildSystemPrompt(book.title);
-  const client = new Anthropic();
 
   console.log(`Extracting chapter ${chapterIndex} (${chapter.wordCount} words) with ${model} ...`);
 
-  const response = await client.messages.create({
+  const result = await callExtraction({
     model,
-    max_tokens: MAX_TOKENS,
-    system: systemPrompt,
-    output_config: {
-      format: { type: "json_schema", schema: EXTRACTION_SCHEMA },
-    },
-    messages: [{ role: "user", content: chapter.text }],
+    systemPrompt,
+    chapterText: chapter.text,
+    schema: EXTRACTION_SCHEMA,
+    maxTokens: MAX_TOKENS,
   });
 
   const slug = deriveSlug(parsedJsonPath);
   const outputDir = path.resolve(__dirname, "..", "output");
-  const textBlock = response.content.find((b) => b.type === "text");
 
-  if (response.stop_reason === "refusal") {
-    console.error("The model refused this request (stop_reason: refusal). No output written.");
+  if (result.stopReason === "refusal") {
+    console.error("The model refused this request (stopReason: refusal). No output written.");
     process.exitCode = 1;
     return;
   }
-  if (response.stop_reason === "max_tokens") {
-    console.error(`Output truncated at ${MAX_TOKENS} tokens (stop_reason: max_tokens). No checkpoint written.`);
+  if (result.stopReason === "max_tokens") {
+    console.error(`Output truncated at ${MAX_TOKENS} tokens (stopReason: max_tokens). No checkpoint written.`);
     console.error("Raw (truncated) text follows:\n");
-    console.error(textBlock?.text ?? "(no text block)");
+    console.error(result.text || "(no text)");
     process.exitCode = 1;
     return;
   }
-  if (!textBlock) {
-    console.error(`No text block in response (stop_reason: ${response.stop_reason}). No output written.`);
+  if (!result.text) {
+    console.error(`No text in response (stopReason: ${result.stopReason}). No output written.`);
     process.exitCode = 1;
     return;
   }
 
   let extraction: unknown;
   try {
-    extraction = JSON.parse(textBlock.text);
+    extraction = JSON.parse(result.text);
   } catch {
     const rawPath = path.join(outputDir, `${slug}-idx${chapterIndex}-extract-raw.txt`);
-    fs.writeFileSync(rawPath, textBlock.text, "utf-8");
+    fs.writeFileSync(rawPath, result.text, "utf-8");
     console.error(`Response was not valid JSON despite structured outputs. Raw text dumped to: ${rawPath}`);
     process.exitCode = 1;
     return;
@@ -204,13 +201,24 @@ async function main() {
 
   const checkpoint = {
     meta: {
-      model: response.model,
+      // The registry ID that was *requested*, not the string the vendor
+      // returned. The requested ID is the one the registry can price, and it
+      // survives a vendor resolving an alias to a dated snapshot — a served
+      // string would not, which is what would make a run un-resumable once
+      // extracts are matched against the model that asked for them. The served
+      // string is kept alongside so a re-pointed alias stays visible.
+      model,
+      modelReturned: result.modelReturned,
       chapterIndex,
       chapterTitle,
       chapterWordCount: chapter.wordCount,
       systemPrompt,
-      stopReason: response.stop_reason,
-      usage: response.usage,
+      stopReason: result.stopReason,
+      // Exactly the two counts, as the pipeline's own format — not a dump of
+      // whatever usage object the SDK returned. The snake_case names are
+      // deliberate: the comparison tooling already reads them off extracts on
+      // disk, so keeping them means no paid output needs migrating.
+      usage: { input_tokens: result.usage.inputTokens, output_tokens: result.usage.outputTokens },
       timestamp: new Date().toISOString(),
     },
     extraction,
@@ -226,7 +234,7 @@ async function main() {
   console.log(`Characters:     ${e.characters.length}`);
   console.log(`Relationships:  ${e.relationships.length}`);
   console.log(`Events:         ${e.events.length}`);
-  console.log(`Tokens:         ${response.usage.input_tokens} in / ${response.usage.output_tokens} out`);
+  console.log(`Tokens:         ${result.usage.inputTokens} in / ${result.usage.outputTokens} out`);
   console.log(`Output written: ${outputPath}`);
 }
 
