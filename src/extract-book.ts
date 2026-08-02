@@ -42,7 +42,7 @@ interface BookExtractionResponse {
   usage: Anthropic.Message["usage"];
 }
 
-interface Totals {
+export interface Totals {
   inputTokens: number;
   outputTokens: number;
   apiCalls: number;
@@ -674,22 +674,47 @@ function formatDuration(ms: number): string {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
+export interface ChapterRunInput {
+  plans: ChapterPlan[];
+  chunksDir: string;
+  book: ParsedBook;
+  model: string;
+  // Mutated in place — the caller owns these, for the reason given where main()
+  // declares them.
+  roster: RosterEntry[];
+  manifestChapters: ManifestChapterEntry[];
+  totals: Totals;
+  // Denominator for the progress ordinal only — the plans decide what is
+  // actually extracted.
+  toExtractCount: number;
+  // --rebuild-manifest: replay the chapter extracts already on disk and make no
+  // API call, not even for an index --force targeted. Named as the flag is, and
+  // as assertCheckpointModelsMatch already names the same condition.
+  //
+  // It is a separate field from `client` deliberately. A null client used to
+  // mean this, while the extraction seam's optional client means "a test
+  // double, otherwise a real one" — one parameter holding both a mode and a
+  // dependency, with null and undefined meaning opposite things.
+  rebuildMode?: boolean;
+  // Omitted on a live run, which then builds a real SDK client on first use;
+  // supplied by tests. Note which way this defaults: an extraction with no
+  // client is the paying path, not an inert one.
+  client?: BookExtractionClient;
+}
+
 // Walk every chapter in book order, building the roster and manifest. Narrative
 // chapters that willExtract get a (paid) API call; the rest load from their
 // checkpoint so the roster carries full context regardless of the extraction
-// window. `client === null` is read-only mode (rebuild): nothing is extracted.
-async function processChapters(
-  plans: ChapterPlan[],
-  chunksDir: string,
-  book: ParsedBook,
-  client: BookExtractionClient | null,
-  roster: RosterEntry[],
-  manifestChapters: ManifestChapterEntry[],
-  totals: Totals,
-  toExtractCount: number,
-  model: string
-): Promise<void> {
+// window.
+export async function processChapters(input: ChapterRunInput): Promise<void> {
+  const { plans, chunksDir, book, roster, manifestChapters, totals, toExtractCount, model, rebuildMode } =
+    input;
   let extractedSoFar = 0;
+  // Built on first extraction rather than up front, so that a caller which
+  // supplies no client — every test — never constructs an SDK client at all.
+  // main() still refuses to start without a credential, so the construction
+  // reached here always succeeds.
+  let client = input.client;
 
   for (const plan of plans) {
     const { chapter } = plan;
@@ -702,7 +727,8 @@ async function processChapters(
 
     const outPath = checkpointPath(chunksDir, chapter.index);
 
-    if (client !== null && plan.willExtract) {
+    if (!rebuildMode && plan.willExtract) {
+      client ??= new Anthropic();
       const ordinal = `[${++extractedSoFar}/${toExtractCount}]`;
       const label = `${ordinal} idx ${chapter.index} · ${chapter.title ?? ""}`;
       // Print the prefix without a newline so the in-flight chapter is visible
@@ -804,7 +830,17 @@ async function main() {
     const roster: RosterEntry[] = [];
     const manifestChapters: ManifestChapterEntry[] = [];
     const totals: Totals = { inputTokens: 0, outputTokens: 0, apiCalls: 0 };
-    await processChapters(plans, chunksDir, book, null, roster, manifestChapters, totals, 0, opts.model);
+    await processChapters({
+      plans,
+      chunksDir,
+      book,
+      model: opts.model,
+      roster,
+      manifestChapters,
+      totals,
+      toExtractCount: 0,
+      rebuildMode: true,
+    });
     writeManifest(chunksDir, opts, book, manifestChapters, roster, totals, true);
     console.log(`Manifest rebuilt from ${manifestChapters.filter((c) => c.status === "from-cache").length} cached chunks — no API calls made.`);
     return;
@@ -832,9 +868,6 @@ async function main() {
   }
 
   fs.mkdirSync(chunksDir, { recursive: true });
-  // Only need a client when there's something to extract; an all-cached run
-  // just rebuilds the roster/manifest from disk.
-  const client = toExtract.length > 0 ? new Anthropic() : null;
 
   // Accumulators owned here so a mid-run failure still has the partial state
   // (real token totals, chapters completed so far) to persist. A supplied roster
@@ -848,7 +881,16 @@ async function main() {
 
   const runStart = performance.now();
   try {
-    await processChapters(plans, chunksDir, book, client, roster, manifestChapters, totals, toExtract.length, opts.model);
+    await processChapters({
+      plans,
+      chunksDir,
+      book,
+      model: opts.model,
+      roster,
+      manifestChapters,
+      totals,
+      toExtractCount: toExtract.length,
+    });
   } catch (err) {
     // Persist progress to a side file rather than clobbering a possibly-complete
     // manifest.json with a truncated one; a rerun resumes from the checkpoints.

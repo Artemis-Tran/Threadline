@@ -21,8 +21,10 @@ import {
   buildSystemPrompt,
   assertProviderSupported,
   CliOptions,
+  ChapterRunInput,
+  processChapters,
 } from "../src/extract-book";
-import { ParsedBook, ParsedChapter, RosterEntry, ExtractedCharacter } from "../src/types";
+import { ParsedBook, ParsedChapter, RosterEntry, ExtractedCharacter, Extraction } from "../src/types";
 import { resolveModel } from "../src/models";
 
 const SONNET_MODEL = resolveModel("claude-sonnet-5");
@@ -78,6 +80,89 @@ function withRosterFile(contents: string, fn: (rosterPath: string) => void): voi
     fn(rosterPath);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- Anthropic response doubles ------------------------------------------
+//
+// Stage 3 builds its own Anthropic request rather than going through the
+// extraction seam (ADR-0008), so its tests inject a client. Nothing below
+// reaches a live API or spends anything.
+
+// The vendor's real usage shape, not a two-count stand-in: the reasoning split
+// arrives nested inside this object.
+function anthropicUsage(overrides: Partial<Anthropic.Usage> = {}): Anthropic.Usage {
+  return {
+    input_tokens: 1200,
+    output_tokens: 340,
+    cache_creation: null,
+    cache_creation_input_tokens: null,
+    cache_read_input_tokens: null,
+    inference_geo: null,
+    output_tokens_details: null,
+    server_tool_use: null,
+    service_tier: null,
+    ...overrides,
+  };
+}
+
+function extractionOf(...names: string[]): Extraction {
+  return { characters: names.map((n) => extractedCharacter(n)), relationships: [], events: [] };
+}
+
+// One scripted answer. `text: null` means a response carrying no text block,
+// which is a different failure from a refusal and has to stay tellable apart.
+interface CannedResponse {
+  stop_reason?: string | null;
+  text?: string | null;
+  usage?: Anthropic.Usage;
+}
+
+function cannedResponse(canned: CannedResponse) {
+  const text = canned.text === undefined ? JSON.stringify(extractionOf("Henry")) : canned.text;
+  return {
+    model: "claude-sonnet-5-20260101",
+    stop_reason: canned.stop_reason === undefined ? "end_turn" : canned.stop_reason,
+    content: text === null ? [] : [{ type: "text" as const, text, citations: null }],
+    usage: canned.usage ?? anthropicUsage(),
+  };
+}
+
+// Answers each call from the script in order and records what it was asked, so
+// a test can assert on the prompt the *second* chapter was sent — the only
+// externally visible evidence that the first chapter's roster carried forward.
+function scriptedClient(script: CannedResponse[]): {
+  client: BookExtractionClient;
+  requests: Anthropic.MessageCreateParamsNonStreaming[];
+} {
+  const requests: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  return {
+    requests,
+    client: {
+      messages: {
+        async create(body) {
+          const canned = script[requests.length];
+          requests.push(body);
+          if (canned === undefined) throw new Error(`unscripted API call #${requests.length}`);
+          return cannedResponse(canned);
+        },
+      },
+    },
+  };
+}
+
+// processChapters writes a live progress line per chapter; swallow it so the
+// suite stays readable. Restored on the way out, including on a throw.
+async function quiet<T>(fn: () => Promise<T>): Promise<T> {
+  const log = console.log;
+  const write = process.stdout.write;
+  console.log = () => {};
+  process.stdout.write = (() => true) as typeof process.stdout.write;
+  try {
+    return await fn();
+  } finally {
+    console.log = log;
+    process.stdout.write = write;
   }
 }
 
@@ -582,38 +667,8 @@ describe("extract-book buildSystemPrompt", () => {
 // client is injected, so nothing here reaches a live API or spends anything.
 
 describe("extractChapter", () => {
-  // The vendor's real usage shape, not a two-count stand-in: the whole point of
-  // the reasoning split is that it arrives nested inside this object.
-  function usage(overrides: Partial<Anthropic.Usage> = {}): Anthropic.Usage {
-    return {
-      input_tokens: 1200,
-      output_tokens: 340,
-      cache_creation: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      inference_geo: null,
-      output_tokens_details: null,
-      server_tool_use: null,
-      service_tier: null,
-      ...overrides,
-    };
-  }
-
-  const EXTRACTION = { characters: [extractedCharacter("Henry")], relationships: [], events: [] };
-
   function fakeClient(responseUsage: Anthropic.Usage): BookExtractionClient {
-    return {
-      messages: {
-        async create() {
-          return {
-            model: "claude-sonnet-5-20260101",
-            stop_reason: "end_turn",
-            content: [{ type: "text" as const, text: JSON.stringify(EXTRACTION), citations: null }],
-            usage: responseUsage,
-          };
-        },
-      },
-    };
+    return scriptedClient([{ usage: responseUsage }]).client;
   }
 
   // Read back off disk, so the assertions are about the file a later stage
@@ -640,20 +695,206 @@ describe("extractChapter", () => {
   }
 
   test("stamps the reasoning split under the seam's normalised name", async () => {
-    const written = await writtenUsage(usage({ output_tokens_details: { thinking_tokens: 214 } }));
+    const written = await writtenUsage(anthropicUsage({ output_tokens_details: { thinking_tokens: 214 } }));
     assert.equal(written.reasoning_tokens, 214);
   });
 
   test("omits the reasoning count when the vendor reported no detail", async () => {
     // Absent, not zero — see ExtractionUsage.reasoningTokens.
-    const written = await writtenUsage(usage());
+    const written = await writtenUsage(anthropicUsage());
     assert.equal("reasoning_tokens" in written, false);
   });
 
   test("leaves the billed counts the manifest sums untouched", async () => {
-    const written = await writtenUsage(usage({ output_tokens_details: { thinking_tokens: 214 } }));
+    const written = await writtenUsage(anthropicUsage({ output_tokens_details: { thinking_tokens: 214 } }));
     assert.equal(written.input_tokens, 1200);
     // The split decomposes the output count rather than adding to it.
     assert.equal(written.output_tokens, 340);
+  });
+});
+
+// --- the per-chapter walk --------------------------------------------------
+//
+// The code path that spends the money — reachable at all only since the rebuild
+// mode and the client stopped sharing one parameter (see ChapterRunInput).
+
+describe("processChapters", () => {
+  async function withChunksDir(fn: (dir: string) => Promise<void>): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-run-"));
+    try {
+      await fn(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // Put a chapter extract on disk, as a previous run would have left it.
+  function seedExtract(dir: string, index: number, ...names: string[]): void {
+    fs.writeFileSync(checkpointPath(dir, index), JSON.stringify({ extraction: extractionOf(...names) }), "utf-8");
+  }
+
+  function runInput(over: Partial<ChapterRunInput> & Pick<ChapterRunInput, "plans" | "chunksDir" | "book">): ChapterRunInput {
+    return {
+      model: "claude-sonnet-5",
+      roster: [],
+      manifestChapters: [],
+      totals: { inputTokens: 0, outputTokens: 0, apiCalls: 0 },
+      toExtractCount: over.plans.filter((p) => p.willExtract).length,
+      ...over,
+    };
+  }
+
+  const TWO_CHAPTERS = book([chapter(4, "One", 900), chapter(5, "Two", 900)]);
+
+  describe("a failed chapter aborts the run", () => {
+    // Each of the three ways a chapter can come back unusable must stop the
+    // run rather than write an extract. Whichever one it is has to stay legible
+    // in the message: a refusal will not succeed on a retry, a truncation will
+    // with a bigger budget, and a missing text block is neither.
+    const failures: Array<[string, CannedResponse, RegExp]> = [
+      ["a refusal", { stop_reason: "refusal", text: null }, /refused/],
+      ["truncation", { stop_reason: "max_tokens", text: '{"characters":[{"na' }, /truncated at \d+ tokens/],
+      ["no text block", { stop_reason: "tool_use", text: null }, /no text block/],
+    ];
+
+    for (const [name, canned, message] of failures) {
+      test(`${name} aborts before the extract is written`, async () => {
+        await withChunksDir(async (dir) => {
+          const book1 = book([chapter(4, "One", 900)]);
+          const plans = planChapters(book1, defaultOpts(), dir);
+          const { client } = scriptedClient([canned]);
+
+          await assert.rejects(
+            () => quiet(() => processChapters(runInput({ plans, chunksDir: dir, book: book1, client }))),
+            message
+          );
+          assert.equal(fs.existsSync(checkpointPath(dir, 4)), false);
+        });
+      });
+    }
+
+    test("truncated output is preserved beside the extract before the abort", async () => {
+      await withChunksDir(async (dir) => {
+        const book1 = book([chapter(4, "One", 900)]);
+        const plans = planChapters(book1, defaultOpts(), dir);
+        const { client } = scriptedClient([{ stop_reason: "max_tokens", text: '{"characters":[{"na' }]);
+
+        await assert.rejects(() =>
+          quiet(() => processChapters(runInput({ plans, chunksDir: dir, book: book1, client })))
+        );
+
+        // Paid output; losing it silently would be the whole cost of the call.
+        const truncated = checkpointPath(dir, 4).replace(/\.json$/, "-truncated.txt");
+        assert.equal(fs.readFileSync(truncated, "utf-8"), '{"characters":[{"na');
+      });
+    });
+  });
+
+  test("carries the roster forward from one chapter into the next chapter's prompt", async () => {
+    await withChunksDir(async (dir) => {
+      const plans = planChapters(TWO_CHAPTERS, defaultOpts(), dir);
+      const { client, requests } = scriptedClient([
+        { text: JSON.stringify(extractionOf("Henry Ashford")) },
+        { text: JSON.stringify(extractionOf("Mira")) },
+      ]);
+      const input = runInput({ plans, chunksDir: dir, book: TWO_CHAPTERS, client });
+
+      await quiet(() => processChapters(input));
+
+      assert.equal(requests.length, 2);
+      // The first chapter has nothing behind it, so its prompt carries no roster.
+      assert.equal(/Characters known so far/.test(String(requests[0].system)), false);
+      // The second one does — this is the carry-forward the whole stage exists for.
+      assert.match(String(requests[1].system), /Characters known so far.*Henry Ashford/s);
+      assert.deepEqual(input.roster.map((r) => r.name), ["Henry Ashford", "Mira"]);
+    });
+  });
+
+  test("routes each chapter to extracted, cached, or pending, and says so in the manifest", async () => {
+    await withChunksDir(async (dir) => {
+      const b = book([
+        chapter(3, "Foreword", 100), // too short to be narrative
+        chapter(4, "One", 900), // no extract on disk, in the window → extracted
+        chapter(5, "Two", 900), // extract on disk → cached
+        chapter(6, "Three", 900), // skipped this run, nothing on disk → pending
+      ]);
+      seedExtract(dir, 5, "Mira");
+      const plans = planChapters(b, defaultOpts({ skip: new Set([6]) }), dir);
+      const { client, requests } = scriptedClient([{ text: JSON.stringify(extractionOf("Henry Ashford")) }]);
+      const input = runInput({ plans, chunksDir: dir, book: b, client });
+
+      await quiet(() => processChapters(input));
+
+      assert.deepEqual(
+        input.manifestChapters.map((c) => [c.index, c.status, c.file]),
+        [
+          [3, "skipped:word-count", undefined],
+          [4, "extracted", "idx004-extract.json"],
+          [5, "from-cache", "idx005-extract.json"],
+          [6, "pending", undefined],
+        ]
+      );
+      // The manifest row names a file, so the file has to be there and hold the
+      // chapter's own extract — the row is a promise stage 4 later relies on.
+      const written = JSON.parse(fs.readFileSync(checkpointPath(dir, 4), "utf-8"));
+      assert.deepEqual(written.extraction, extractionOf("Henry Ashford"));
+      assert.equal(written.meta.chapterIndex, 4);
+      assert.equal(written.meta.stopReason, "end_turn");
+      // Only the extracted chapter costs anything, and only it is billed.
+      assert.equal(requests.length, 1);
+      assert.deepEqual(input.totals, { inputTokens: 1200, outputTokens: 340, apiCalls: 1 });
+      // A cached chapter still feeds the roster, or later prompts would lose it.
+      assert.deepEqual(input.roster.map((r) => r.name), ["Henry Ashford", "Mira"]);
+    });
+  });
+
+  describe("rebuild mode", () => {
+    test("makes no call and builds the roster a normal run over the same extracts builds", async () => {
+      await withChunksDir(async (dir) => {
+        seedExtract(dir, 4, "Henry Ashford");
+        seedExtract(dir, 5, "Mira");
+        const plans = planChapters(TWO_CHAPTERS, defaultOpts(), dir);
+
+        // An empty script rather than no client at all: a client that throws on
+        // any call makes "no API call" structural, instead of resting on the
+        // plans happening not to ask for one.
+        const rebuild = runInput({
+          plans,
+          chunksDir: dir,
+          book: TWO_CHAPTERS,
+          client: scriptedClient([]).client,
+          rebuildMode: true,
+        });
+        await quiet(() => processChapters(rebuild));
+
+        // Both extracts exist, so a normal run loads both from cache and never
+        // reaches for a client either. The rebuilt roster must match it exactly
+        // — that equivalence is the only thing making a rebuild trustworthy.
+        const normal = runInput({ plans, chunksDir: dir, book: TWO_CHAPTERS, client: scriptedClient([]).client });
+        await quiet(() => processChapters(normal));
+
+        assert.deepEqual(rebuild.roster, normal.roster);
+        assert.deepEqual(rebuild.manifestChapters, normal.manifestChapters);
+        assert.deepEqual(rebuild.totals, { inputTokens: 0, outputTokens: 0, apiCalls: 0 });
+      });
+    });
+
+    test("loads a forced index from cache instead of re-extracting it", async () => {
+      await withChunksDir(async (dir) => {
+        seedExtract(dir, 4, "Henry Ashford");
+        // --force normally means "extract this one, period". A rebuild makes no
+        // API call at all, so it must override even that; assertCheckpointModelsMatch
+        // checks every cached extract in this mode for exactly that reason.
+        const plans = planChapters(TWO_CHAPTERS, defaultOpts({ forceIndices: new Set([4]) }), dir);
+        assert.equal(plans[0].willExtract, true);
+
+        const { client, requests } = scriptedClient([]);
+        const input = runInput({ plans, chunksDir: dir, book: TWO_CHAPTERS, client, rebuildMode: true });
+        await quiet(() => processChapters(input));
+
+        assert.equal(requests.length, 0);
+        assert.equal(input.manifestChapters[0].status, "from-cache");
+      });
+    });
   });
 });
