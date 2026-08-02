@@ -100,37 +100,75 @@ prefix-sniffing the registry rejects as a second, weaker source of truth about
 model identity — in the one place guarding paid output — and it cannot tell a
 snapshot apart from a genuinely different model whose ID extends another's.
 
-## Reasoning effort is pinned, at medium
+## Reasoning effort is pinned, at low
 
-The OpenAI rows are called at medium reasoning effort. The pinning is the
-decision, not the value: medium happens to be GPT-5.6's own default, and "it's
-the default anyway, drop the parameter" is the simplification to resist.
-Reasoning tokens bill as output and spend the same budget the answer needs, so
-effort has to be a number the registry's output estimate is sized against, not
-whatever a vendor defaults to this quarter.
+The OpenAI rows are called at low reasoning effort. The pinning is the decision,
+not the value: reasoning tokens bill as output and spend the same budget the
+answer needs, so effort has to be a level the registry's output estimate is
+sized against, not whatever a vendor defaults to this quarter. That was worth
+saying when the pinned value was also GPT-5.6's default and "drop the parameter,
+it's the default anyway" was the available simplification. It is now
+load-bearing in the ordinary way, because low is not the default.
 
-Medium rather than low is contested and unmeasured, and should be read that
-way. The case for low is that extraction is mechanical read-and-structure work
-that deliberation cannot improve. The case for medium is that ADR-0004 found
-the cheap-model failure mode on this task to be roster noise — walk-ons
-promoted to characters, one person fragmented across several entries — which is
-a judgment failure rather than a transcription one, and deliberation is a
-plausible lever against it. Neither position has been tested; the first Luna
-probe settles it. ADR-0004 supports this choice rather than obstructing it, and
-its conclusion is untouched: Sonnet is still the default.
+Medium was pinned first, and the choice was recorded here as contested and
+unmeasured. The case for low was that extraction is mechanical
+read-and-structure work that deliberation cannot improve. The case for medium
+was that ADR-0004 found the cheap-model failure mode on this task to be roster
+noise — walk-ons promoted to characters, one person fragmented across several
+entries — a judgment failure rather than a transcription one, and deliberation
+is a plausible lever against it.
+
+The Luna probe measured it, one chapter at each effort:
+
+| effort | input | output | reasoning | cost |
+|---|---|---|---|---|
+| medium | 2455 | 1290 | 382 | $0.002039 |
+| low | 2455 | 1054 | 0 | $0.001756 |
+
+Medium spent 382 reasoning tokens for a bit-for-bit identical character set —
+same six names, same three walk-on promotions. The roster noise medium was
+bought to suppress is present at both efforts in the same amount, so the
+argument for it does not survive its own test, and low is pinned. Both efforts
+also passed the probe's gating checks: closed vocabularies honoured, and a
+roster entry (`"Henry Ashford"`) reused verbatim against a chapter that says
+"Henry" 22 times and never "Ashford".
+
+This is one chapter, and it settles the question it was run to settle rather
+than the general one. It shows medium buying nothing on a chapter where low
+already succeeds; it does not show that no chapter exists where deliberation
+would help. Reopening this means new measurement, not a re-run of the original
+argument. ADR-0004's conclusion is untouched either way: Sonnet is still the
+default.
 
 ## Consequences
 
 Effort spends against the only reason Luna's row exists. Luna earns it by
 costing roughly a twelfth of Sonnet's list rate on output — which is where
 reasoning tokens bill, at $1.20/MTok, eroding exactly that margin. The registry
-therefore assumes 12000 output tokens per chapter for the OpenAI rows, six
-times the Anthropic figure, so that the cost gate stays a ceiling. That
-estimate is unmeasured; one live chapter corrects it, and the vendor's reported
-output count already includes reasoning tokens, so no separate accounting is
-needed.
+originally assumed 12000 output tokens per chapter for the OpenAI rows, six
+times the Anthropic figure, on the expectation that reasoning would dwarf the
+answer. That figure was recorded here as unmeasured, to be corrected by one live
+chapter. It has been, and it was wrong by more than an order of magnitude in the
+expensive direction: the probed chapter spent 1290 output tokens at medium and
+1054 at low, so the gate quoted $0.015373 against $0.002039 actually spent — 7.5×
+over. Extrapolated across the reference book (48 narrative chapters, 92,955
+words) that was roughly $0.75 quoted against about $0.10, and around 92% of the
+gap was the output estimate alone.
 
-The per-chapter token ceiling is 16000, and at medium effort the reasoning and
-the answer draw on it together, so a long chapter is likelier to come back
-truncated than it would at low effort. If a probe truncates, that is the cause,
-and it says nothing about the model's extraction quality.
+The OpenAI rows now carry 1290: the higher of the probe's two runs, not the mean
+of them and not the low-effort figure the seam actually pins. A row's estimate is
+a ceiling, and taking medium's number keeps headroom over what a low-effort run
+spends. A gate that over-quotes makes a run look worse than it is; a gate that
+under-quotes stops being a gate. The vendor's reported output count already
+includes reasoning tokens, so no separate accounting is needed.
+
+The per-word input constant is deliberately left alone at 2.7. It tracks the
+Anthropic baseline closely and over-estimates OpenAI, which is the safe
+direction, and the input side is only about 8% of an OpenAI run's quote — there
+is no gate error worth spending a second constant on.
+
+The per-chapter token ceiling is 16000, unchanged. Reasoning and the answer draw
+on it together, so truncation was a live risk at medium; at low, with the probe
+reporting zero reasoning tokens and about a fifteenth of the ceiling spent on
+output, it is remote. If a chapter does truncate, that is still the cause, and it
+says nothing about the model's extraction quality.
