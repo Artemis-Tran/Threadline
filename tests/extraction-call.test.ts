@@ -6,6 +6,7 @@ import {
   callExtraction,
   apiErrorMessage,
   apiKeyEnvVar,
+  anthropicReasoningTokens,
   AnthropicExtractionClient,
   OpenAIExtractionClient,
 } from "../src/extraction-call";
@@ -122,6 +123,30 @@ describe("callExtraction response normalisation", () => {
       response({ content: [{ type: "thinking" }, { type: "text", text: '{"events":[]}' }] })
     );
     assert.equal((await callExtraction(REQUEST, client)).text, '{"events":[]}');
+  });
+
+  test("normalises Anthropic's thinking-token detail into the reasoning count", async () => {
+    const { client } = fakeClient(
+      response({ usage: { ...USAGE, output_tokens_details: { thinking_tokens: 214 } } })
+    );
+    const result = await callExtraction(REQUEST, client);
+
+    assert.equal(result.usage.reasoningTokens, 214);
+    // The billed totals are untouched: the detail decomposes output_tokens,
+    // it does not add to it.
+    assert.equal(result.usage.outputTokens, 340);
+  });
+
+  test("leaves the reasoning count absent — not zero — when the detail is missing", async () => {
+    for (const usage of [USAGE, { ...USAGE, output_tokens_details: null }]) {
+      const { client } = fakeClient(response({ usage }));
+      const result = await callExtraction(REQUEST, client);
+
+      // Absent rather than 0: "the vendor didn't report it" and "the model
+      // reasoned for nothing" are different facts, and the effort decision
+      // ADR-0008 defers to a probe turns on telling them apart.
+      assert.equal("reasoningTokens" in result.usage, false);
+    }
   });
 });
 
@@ -296,10 +321,49 @@ describe("callExtraction OpenAI response normalisation", () => {
 
   test("reports zero tokens rather than throwing when usage is absent", async () => {
     const { client } = fakeOpenAIClient(openAIResponse({ usage: undefined }));
+    // Zero is the right answer for the billed counts — nothing was reported, so
+    // nothing is added to a total — but not for the reasoning split, which stays
+    // absent rather than claiming a measurement that was never made.
     assert.deepEqual((await callExtraction(OPENAI_REQUEST, client)).usage, {
       inputTokens: 0,
       outputTokens: 0,
     });
+  });
+
+  test("normalises OpenAI's reasoning-token detail to the same field Anthropic's lands in", async () => {
+    const { client } = fakeOpenAIClient(
+      openAIResponse({ usage: { ...USAGE, output_tokens_details: { reasoning_tokens: 896 } } })
+    );
+    const result = await callExtraction(OPENAI_REQUEST, client);
+
+    assert.equal(result.usage.reasoningTokens, 896);
+    assert.equal(result.usage.outputTokens, 340);
+  });
+
+  test("leaves the reasoning count absent when the detail is missing", async () => {
+    const { client } = fakeOpenAIClient(openAIResponse());
+    assert.equal("reasoningTokens" in (await callExtraction(OPENAI_REQUEST, client)).usage, false);
+  });
+});
+
+// Exported for stage 3, which still builds its own Anthropic request (ADR-0008)
+// and would otherwise have to know the vendor's field name itself.
+describe("anthropicReasoningTokens", () => {
+  test("reads the thinking-token detail", () => {
+    assert.equal(anthropicReasoningTokens({ output_tokens_details: { thinking_tokens: 77 } }), 77);
+  });
+
+  test("reads a genuine zero as a measurement", () => {
+    assert.equal(anthropicReasoningTokens({ output_tokens_details: { thinking_tokens: 0 } }), 0);
+  });
+
+  test("returns undefined for a missing, null, or non-numeric detail", () => {
+    assert.equal(anthropicReasoningTokens({}), undefined);
+    assert.equal(anthropicReasoningTokens({ output_tokens_details: null }), undefined);
+    assert.equal(
+      anthropicReasoningTokens({ output_tokens_details: {} as { thinking_tokens: number } }),
+      undefined
+    );
   });
 });
 

@@ -18,6 +18,29 @@ import {
 } from "./types";
 import { sanitizeName, sanitizeAliases, findIdentityMatch } from "./identity";
 import { DEFAULT_MODEL, resolveModel, ModelInfo, ModelRates } from "./models";
+import { anthropicReasoningTokens } from "./extraction-call";
+
+// The slice of an Anthropic client stage 3 uses, declared structurally for the
+// reason given on AnthropicExtractionClient in ./extraction-call — a test can
+// inject a canned response without standing up a real client. It is a separate
+// declaration because stage 3 reads the vendor's full usage object, which the
+// seam's narrower response type does not carry.
+//
+// This is not stage 3 going through the seam: it still builds its own request
+// and reads its own vendor response (ADR-0008). It is only what makes the
+// extract writer testable offline.
+export interface BookExtractionClient {
+  messages: {
+    create(body: Anthropic.MessageCreateParamsNonStreaming): Promise<BookExtractionResponse>;
+  };
+}
+
+interface BookExtractionResponse {
+  model: string;
+  stop_reason: string | null;
+  content: Anthropic.Message["content"];
+  usage: Anthropic.Message["usage"];
+}
 
 interface Totals {
   inputTokens: number;
@@ -558,8 +581,8 @@ function writeManifest(
   fs.writeFileSync(path.join(chunksDir, fileName), JSON.stringify(manifest, null, 2), "utf-8");
 }
 
-async function extractChapter(
-  client: Anthropic,
+export async function extractChapter(
+  client: BookExtractionClient,
   book: ParsedBook,
   chapter: ParsedChapter,
   roster: RosterEntry[],
@@ -605,6 +628,8 @@ async function extractChapter(
     );
   }
 
+  const reasoningTokens = anthropicReasoningTokens(response.usage);
+
   const checkpoint = {
     meta: {
       model: response.model,
@@ -614,7 +639,17 @@ async function extractChapter(
       rosterSize: roster.length,
       systemPrompt,
       stopReason: response.stop_reason,
-      usage: response.usage,
+      // The vendor's usage object verbatim — the billed counts the manifest
+      // sums are unchanged — plus the reasoning split under the seam's
+      // normalised name, so that one key at least is spelled the same here as
+      // in a stage 2 extract. The rest of this object is still the raw vendor
+      // dump, which stage 2's two-count format is not; only the split is
+      // common. Anthropic reports it as thinking tokens, and its own nested
+      // spelling stays in the dump beside the normalised one.
+      usage: {
+        ...response.usage,
+        ...(reasoningTokens === undefined ? {} : { reasoning_tokens: reasoningTokens }),
+      },
       timestamp: new Date().toISOString(),
     },
     extraction,
@@ -647,7 +682,7 @@ async function processChapters(
   plans: ChapterPlan[],
   chunksDir: string,
   book: ParsedBook,
-  client: Anthropic | null,
+  client: BookExtractionClient | null,
   roster: RosterEntry[],
   manifestChapters: ManifestChapterEntry[],
   totals: Totals,
@@ -690,8 +725,12 @@ async function processChapters(
       totals.outputTokens += usage.output_tokens;
       totals.apiCalls += 1;
       manifestChapters.push({ ...base, status: "extracted", file: path.basename(outPath) });
+      // The reasoning split is shown only when the vendor reported one, so a
+      // blank stays honest about a model that said nothing.
+      const reasoning = anthropicReasoningTokens(usage);
+      const reasoningNote = reasoning === undefined ? "" : ` (${reasoning} reasoning)`;
       console.log(
-        `done · ${extraction.characters.length} chars, ${extraction.relationships.length} rels, ${extraction.events.length} events · ${usage.input_tokens}/${usage.output_tokens} tok · ${formatDuration(performance.now() - startedAt)}`
+        `done · ${extraction.characters.length} chars, ${extraction.relationships.length} rels, ${extraction.events.length} events · ${usage.input_tokens}/${usage.output_tokens}${reasoningNote} tok · ${formatDuration(performance.now() - startedAt)}`
       );
     } else if (fs.existsSync(outPath)) {
       updateRoster(roster, readCheckpointCharacters(outPath), chapter.index);

@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ParsedBook, deriveSlug } from "./types";
 import { DEFAULT_MODEL, resolveModel } from "./models";
-import { apiErrorMessage, apiKeyEnvVar, callExtraction } from "./extraction-call";
+import { apiErrorMessage, apiKeyEnvVar, callExtraction, ExtractionUsage } from "./extraction-call";
 
 const MAX_TOKENS = 16000;
 
@@ -66,6 +66,24 @@ export function buildSystemPrompt(bookTitle: string | null): string {
     "Describe only what this chapter itself states or clearly shows. Do not speculate about events outside this chapter, and do not use outside knowledge of the book.",
     "Use the character's most complete name from the chapter as `name`, and list other forms they are called by in `aliases`.",
   ].join(" ");
+}
+
+// The extract's own usage format, not a dump of whatever usage object the SDK
+// returned. The snake_case names are deliberate: the comparison tooling already
+// reads them off extracts on disk, so keeping them means no paid output needs
+// migrating.
+//
+// `reasoning_tokens` decomposes `output_tokens` rather than adding to it, so it
+// changes no total and no cost. It is written only when the vendor reported the
+// split — an absent key says "not measured", which a zero would not.
+export function checkpointUsage(
+  usage: ExtractionUsage
+): { input_tokens: number; output_tokens: number; reasoning_tokens?: number } {
+  return {
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
+    ...(usage.reasoningTokens === undefined ? {} : { reasoning_tokens: usage.reasoningTokens }),
+  };
 }
 
 const USAGE = "Usage: tsx src/extract-chapter.ts <parsed-json-path> <chapter-index|--list> [--model <id>]";
@@ -226,11 +244,7 @@ async function main() {
       chapterWordCount: chapter.wordCount,
       systemPrompt,
       stopReason: result.stopReason,
-      // Exactly the two counts, as the pipeline's own format — not a dump of
-      // whatever usage object the SDK returned. The snake_case names are
-      // deliberate: the comparison tooling already reads them off extracts on
-      // disk, so keeping them means no paid output needs migrating.
-      usage: { input_tokens: result.usage.inputTokens, output_tokens: result.usage.outputTokens },
+      usage: checkpointUsage(result.usage),
       timestamp: new Date().toISOString(),
     },
     extraction,
@@ -246,7 +260,12 @@ async function main() {
   console.log(`Characters:     ${e.characters.length}`);
   console.log(`Relationships:  ${e.relationships.length}`);
   console.log(`Events:         ${e.events.length}`);
-  console.log(`Tokens:         ${result.usage.inputTokens} in / ${result.usage.outputTokens} out`);
+  // The reasoning split is shown only when it was reported — the probe that
+  // settles the effort question reads it here, and blank is honest about a
+  // vendor that said nothing.
+  const reasoning =
+    result.usage.reasoningTokens === undefined ? "" : `, of which ${result.usage.reasoningTokens} reasoning`;
+  console.log(`Tokens:         ${result.usage.inputTokens} in / ${result.usage.outputTokens} out${reasoning}`);
   console.log(`Output written: ${outputPath}`);
 }
 

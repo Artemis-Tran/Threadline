@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import Anthropic from "@anthropic-ai/sdk";
 import {
+  extractChapter,
+  BookExtractionClient,
   parseArgs,
   planChapters,
   planStatus,
@@ -569,5 +572,88 @@ describe("extract-book buildSystemPrompt", () => {
         buildSystemPrompt("Test Book", accumulated)
       );
     });
+  });
+});
+
+// --- the chapter extract writer -------------------------------------------
+//
+// Stage 3 still builds its own Anthropic request rather than going through the
+// extraction seam (ADR-0008), so its extract writer needs its own coverage. The
+// client is injected, so nothing here reaches a live API or spends anything.
+
+describe("extractChapter", () => {
+  // The vendor's real usage shape, not a two-count stand-in: the whole point of
+  // the reasoning split is that it arrives nested inside this object.
+  function usage(overrides: Partial<Anthropic.Usage> = {}): Anthropic.Usage {
+    return {
+      input_tokens: 1200,
+      output_tokens: 340,
+      cache_creation: null,
+      cache_creation_input_tokens: null,
+      cache_read_input_tokens: null,
+      inference_geo: null,
+      output_tokens_details: null,
+      server_tool_use: null,
+      service_tier: null,
+      ...overrides,
+    };
+  }
+
+  const EXTRACTION = { characters: [extractedCharacter("Henry")], relationships: [], events: [] };
+
+  function fakeClient(responseUsage: Anthropic.Usage): BookExtractionClient {
+    return {
+      messages: {
+        async create() {
+          return {
+            model: "claude-sonnet-5-20260101",
+            stop_reason: "end_turn",
+            content: [{ type: "text" as const, text: JSON.stringify(EXTRACTION), citations: null }],
+            usage: responseUsage,
+          };
+        },
+      },
+    };
+  }
+
+  // Read back off disk, so the assertions are about the file a later stage
+  // actually gets — not about an in-memory object that never round-tripped.
+  type WrittenUsage = { input_tokens?: unknown; output_tokens?: unknown; reasoning_tokens?: unknown };
+
+  async function writtenUsage(responseUsage: Anthropic.Usage): Promise<WrittenUsage> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-extract-"));
+    try {
+      const outPath = path.join(dir, "idx004-extract.json");
+      await extractChapter(
+        fakeClient(responseUsage),
+        book([chapter(4, "One", 900)]),
+        chapter(4, "One", 900),
+        [],
+        outPath,
+        "claude-sonnet-5"
+      );
+      const checkpoint = JSON.parse(fs.readFileSync(outPath, "utf-8")) as { meta: { usage: WrittenUsage } };
+      return checkpoint.meta.usage;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("stamps the reasoning split under the seam's normalised name", async () => {
+    const written = await writtenUsage(usage({ output_tokens_details: { thinking_tokens: 214 } }));
+    assert.equal(written.reasoning_tokens, 214);
+  });
+
+  test("omits the reasoning count when the vendor reported no detail", async () => {
+    // Absent, not zero — see ExtractionUsage.reasoningTokens.
+    const written = await writtenUsage(usage());
+    assert.equal("reasoning_tokens" in written, false);
+  });
+
+  test("leaves the billed counts the manifest sums untouched", async () => {
+    const written = await writtenUsage(usage({ output_tokens_details: { thinking_tokens: 214 } }));
+    assert.equal(written.input_tokens, 1200);
+    // The split decomposes the output count rather than adding to it.
+    assert.equal(written.output_tokens, 340);
   });
 });

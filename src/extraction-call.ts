@@ -25,13 +25,27 @@ import { Provider } from "./models";
 // everything a caller can only treat as "no usable output".
 export type ExtractionStopReason = "ok" | "refusal" | "max_tokens" | "other";
 
+export interface ExtractionUsage {
+  inputTokens: number;
+  outputTokens: number;
+  // How many of `outputTokens` went on internal reasoning rather than on the
+  // answer. It decomposes the output count rather than adding to it, so cost
+  // arithmetic never touches this field.
+  //
+  // Absent, never zero, when the vendor didn't report the detail. "Nothing was
+  // measured" and "the model reasoned for nothing" are different facts, and the
+  // medium-versus-low effort question ADR-0008 defers to a probe is decided by
+  // exactly this number — a zero standing in for silence would settle it wrong.
+  reasoningTokens?: number;
+}
+
 export interface ExtractionResult {
   text: string;
   // The model string the vendor said it served, kept separate from the
   // requested registry ID so a silently re-pointed alias stays visible.
   modelReturned: string;
   stopReason: ExtractionStopReason;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: ExtractionUsage;
 }
 
 export interface ExtractionRequest {
@@ -54,7 +68,16 @@ interface AnthropicResponse {
   model: string;
   stop_reason: string | null;
   content: Array<{ type: string; text?: string }>;
-  usage: { input_tokens: number; output_tokens: number };
+  usage: AnthropicUsage & { input_tokens: number; output_tokens: number };
+}
+
+// Just enough of an Anthropic usage payload to find the thinking split. Both
+// members are wider here than in the SDK — which declares the details object
+// required-but-nullable and `thinking_tokens` required — so that a test double,
+// or a vendor response predating the field, can leave either out. A real
+// payload stays assignable because it only ever narrows this.
+export interface AnthropicUsage {
+  output_tokens_details?: { thinking_tokens?: number } | null;
 }
 
 // The same trick for an OpenAI response. The optional fields are optional in
@@ -65,7 +88,11 @@ interface OpenAIResponse {
   status?: string;
   incomplete_details?: { reason?: string } | null;
   output: Array<{ type: string; content?: Array<{ type: string; text?: string; refusal?: string }> }>;
-  usage?: { input_tokens: number; output_tokens: number };
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    output_tokens_details?: { reasoning_tokens?: number } | null;
+  };
 }
 
 export interface AnthropicExtractionClient {
@@ -122,6 +149,28 @@ export function apiErrorMessage(err: unknown): string | null {
   return null;
 }
 
+// One concept under two vendor names — Anthropic reports it as thinking tokens,
+// OpenAI as reasoning tokens — which is exactly the kind of thing this seam
+// exists to flatten, rather than an OpenAI concern leaking across it.
+//
+// Exported because stage 3 still builds its own Anthropic request (ADR-0008)
+// and would otherwise have to know the vendor's field name itself. It goes when
+// stage 3 moves behind the seam.
+export function anthropicReasoningTokens(usage: AnthropicUsage): number | undefined {
+  return asTokenCount(usage.output_tokens_details?.thinking_tokens);
+}
+
+function openAIReasoningTokens(usage: OpenAIResponse["usage"]): number | undefined {
+  return asTokenCount(usage?.output_tokens_details?.reasoning_tokens);
+}
+
+// Anything that isn't a number — an omitted detail object, an explicit null, a
+// field a later SDK spells differently — is "not reported", which is undefined
+// and not zero. See ExtractionUsage.reasoningTokens for why that matters.
+function asTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
 function normaliseAnthropicStopReason(stopReason: string | null): ExtractionStopReason {
   switch (stopReason) {
     case "end_turn":
@@ -156,6 +205,8 @@ async function callAnthropic(
   // what tells the caller which failure it is looking at.
   const textBlock = response.content.find((b) => b.type === "text");
 
+  const reasoningTokens = anthropicReasoningTokens(response.usage);
+
   return {
     text: textBlock?.text ?? "",
     modelReturned: response.model,
@@ -163,6 +214,7 @@ async function callAnthropic(
     usage: {
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
+      ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
     },
   };
 }
@@ -217,6 +269,8 @@ async function callOpenAI(
   const textPart = parts.find((p) => p.type === "output_text");
   const refused = parts.some((p) => p.type === "refusal");
 
+  const reasoningTokens = openAIReasoningTokens(response.usage);
+
   return {
     text: textPart?.text ?? "",
     modelReturned: response.model,
@@ -224,6 +278,7 @@ async function callOpenAI(
     usage: {
       inputTokens: response.usage?.input_tokens ?? 0,
       outputTokens: response.usage?.output_tokens ?? 0,
+      ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
     },
   };
 }

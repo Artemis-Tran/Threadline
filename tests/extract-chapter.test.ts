@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildSystemPrompt, parseChapterArgs } from "../src/extract-chapter";
+import { buildSystemPrompt, parseChapterArgs, checkpointUsage } from "../src/extract-chapter";
 
 // Stage 2 is a single-chapter probe script; everything beyond the prompt
 // builder lives inside main() and calls the API, so only the prompt contract
@@ -58,5 +58,33 @@ describe("extract-chapter parseChapterArgs", () => {
     assert.throws(() => parseChapterArgs(["book.json", "8", "--model"]), /--model expects/);
     assert.throws(() => parseChapterArgs(["book.json"]), /Usage:/);
     assert.throws(() => parseChapterArgs(["book.json", "8", "9"]), /Usage:/);
+  });
+});
+
+describe("extract-chapter checkpointUsage", () => {
+  test("writes the two billed counts under the pipeline's own snake_case names", () => {
+    // The comparison tooling reads these names off extracts already on disk;
+    // renaming them would strand paid output.
+    assert.deepEqual(checkpointUsage({ inputTokens: 1200, outputTokens: 340 }), {
+      input_tokens: 1200,
+      output_tokens: 340,
+    });
+  });
+
+  test("stamps the reasoning split when the vendor reported one", () => {
+    assert.deepEqual(checkpointUsage({ inputTokens: 1200, outputTokens: 340, reasoningTokens: 214 }), {
+      input_tokens: 1200,
+      output_tokens: 340,
+      reasoning_tokens: 214,
+    });
+  });
+
+  test("omits the key entirely rather than writing a zero nobody measured", () => {
+    assert.equal("reasoning_tokens" in checkpointUsage({ inputTokens: 1, outputTokens: 2 }), false);
+    // A reported zero is a measurement, and is written as one.
+    assert.equal(
+      checkpointUsage({ inputTokens: 1, outputTokens: 2, reasoningTokens: 0 }).reasoning_tokens,
+      0
+    );
   });
 });
