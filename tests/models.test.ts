@@ -30,7 +30,7 @@ describe("resolveModel", () => {
   });
 
   test("carries an output-token estimate for the cost gate", () => {
-    // Pinned for the Anthropic rows because the stage-3 gate used to hardcode
+    // Pinned for the Anthropic rows because the extract step's gate used to hardcode
     // 2000 — a no-flag estimate has to come out unchanged.
     assert.equal(resolveModel("sonnet").outputTokenEstimate, 2000);
     assert.equal(resolveModel("haiku").outputTokenEstimate, 2000);

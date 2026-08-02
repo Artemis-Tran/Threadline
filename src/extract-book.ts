@@ -40,7 +40,7 @@ const NON_NARRATIVE_TITLE =
   /contents|foreword|dedication|afterword|acknowledg|about the author|copyright|epigraph/i;
 
 // A single chapter this long risks truncated output at MAX_TOKENS; splitting
-// isn't implemented in stage 3, so refuse rather than produce bad data.
+// isn't implemented in the extract step, so refuse rather than produce bad data.
 const MAX_CHAPTER_WORDS = 13000;
 
 // Rough token model for the confirmation gate; per-model $/MTok rates and the
@@ -138,7 +138,7 @@ export function buildSystemPrompt(bookTitle: string | null, roster: RosterEntry[
 // Ashford", "the Mystic Potter"), so treating differing aliases as evidence of
 // distinct people shreds a recurring character into many entries. The rare
 // opposite case — two genuinely different characters sharing a bare name — is
-// left for stage 4's dedupe pass, which has the full per-chapter chunk data
+// left for the merge step's dedupe pass, which has the full per-chapter data
 // (descriptions, relationships, co-occurring characters) needed to tell them
 // apart. Over-merging a hint here is cheap; a fragmented roster is not.
 export function updateRoster(roster: RosterEntry[], characters: ExtractedCharacter[], chapterIndex: number): void {
@@ -440,7 +440,7 @@ export function parseArgs(argv: string[]): CliOptions {
   // A rebuild makes no API calls and exists to reproduce a manifest from the
   // chapter extracts on disk — so its roster must stay purely derived from them.
   // Seeding it would persist operator-supplied entries into the manifest that
-  // ADR-0006 makes later stages trust, with nothing on disk to back them.
+  // ADR-0006 makes later steps trust, with nothing on disk to back them.
   if (opts.rosterPath !== null && opts.rebuildManifest) {
     throw new Error("--roster cannot be combined with --rebuild-manifest: a rebuilt manifest's roster must come only from the chapter extracts on disk.");
   }

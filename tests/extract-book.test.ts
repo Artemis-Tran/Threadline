@@ -622,7 +622,7 @@ describe("updateRoster", () => {
     assert.equal(roster[0].lastAppearedChapterIndex, 10);
   });
 
-  test("description merge is longest-wins by design (the roster is a lossy hint — stage 4 owns recency)", () => {
+  test("description merge is longest-wins by design (the roster is a lossy hint — the merge step owns recency)", () => {
     const roster: RosterEntry[] = [];
     updateRoster(roster, [extractedCharacter("Henry", { description: "a long and detailed early description" })], 4);
     updateRoster(roster, [extractedCharacter("Henry", { description: "short late one" })], 50);
@@ -789,16 +789,18 @@ describe("extract-book buildSystemPrompt", () => {
 
 // --- the chapter extract writer -------------------------------------------
 //
-// Stage 3 still builds its own Anthropic request rather than going through the
-// extraction seam (ADR-0008), so its extract writer needs its own coverage. The
-// client is injected, so nothing here reaches a live API or spends anything.
+// The extract step goes through the extraction seam (ADR-0008), but the seam's
+// coverage stops at the normalised response — what actually lands on disk (the
+// stamped model, the flattened usage, the stop reason) is this writer's call, so
+// it needs coverage of its own. The client is injected, so nothing here reaches
+// a live API or spends anything.
 
 describe("extractChapter", () => {
   function fakeClient(responseUsage: AnthropicUsagePayload): ExtractionClient {
     return scriptedClient([{ usage: responseUsage }]).client;
   }
 
-  // Read back off disk, so the assertions are about the file a later stage
+  // Read back off disk, so the assertions are about the file a later step
   // actually gets — not about an in-memory object that never round-tripped.
   type WrittenUsage = { input_tokens?: unknown; output_tokens?: unknown; reasoning_tokens?: unknown };
   type WrittenMeta = { model?: unknown; modelReturned?: unknown; usage: WrittenUsage };
@@ -957,7 +959,7 @@ describe("processChapters", () => {
       assert.equal(requests.length, 2);
       // The first chapter has nothing behind it, so its prompt carries no roster.
       assert.equal(/Characters known so far/.test(String(requests[0].system)), false);
-      // The second one does — this is the carry-forward the whole stage exists for.
+      // The second one does — this is the carry-forward the whole step exists for.
       assert.match(String(requests[1].system), /Characters known so far.*Henry Ashford/s);
       assert.deepEqual(input.roster.map((r) => r.name), ["Henry Ashford", "Mira"]);
     });
@@ -988,7 +990,7 @@ describe("processChapters", () => {
         ]
       );
       // The manifest row names a file, so the file has to be there and hold the
-      // chapter's own extract — the row is a promise stage 4 later relies on.
+      // chapter's own extract — the row is a promise the merge step later relies on.
       const written = JSON.parse(fs.readFileSync(checkpointPath(dir, 4), "utf-8"));
       assert.deepEqual(written.extraction, extractionOf("Henry Ashford"));
       assert.equal(written.meta.chapterIndex, 4);

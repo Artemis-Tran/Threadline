@@ -41,7 +41,7 @@ interface ModelRow {
 // row as the fallback if Luna proves too noisy, not as a saving.
 //
 // The Anthropic rows carry 2000 output tokens because that is the figure the
-// stage-3 gate hardcoded before this field existed.
+// extract step's gate hardcoded before this field existed.
 //
 // The OpenAI rows carry 1290, measured. They previously carried a guessed 12000
 // on the reasoning that GPT-5.6 is a reasoning family whose reasoning tokens

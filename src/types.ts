@@ -1,7 +1,7 @@
 import * as path from "path";
 
 // Shared data shapes for the extraction pipeline. parse-epub.ts produces
-// ParsedBook; the extraction stages consume it. Keeping these in one place
+// ParsedBook; the extraction steps consume it. Keeping these in one place
 // means a parser-side field change is a compile error in the consumers rather
 // than a silent runtime `undefined`.
 
@@ -56,9 +56,9 @@ export interface Extraction {
   events: ExtractedEvent[];
 }
 
-// The stage-3 (extract-book.ts) hint roster, persisted in manifest.json. Not
-// authoritative — capped aliases, truncated descriptions, longest-string-wins
-// merge. Stage 4 (merge-thread.ts) rebuilds its own full history from the
+// The extract step's (extract-book.ts) hint roster, persisted in manifest.json.
+// Not authoritative — capped aliases, truncated descriptions, longest-string-wins
+// merge. The merge step (merge-thread.ts) rebuilds its own full history from the
 // chunk files directly rather than trusting this.
 export interface RosterEntry {
   name: string;
@@ -99,7 +99,7 @@ export interface Manifest {
   roster: RosterEntry[];
 }
 
-// --- Stage 4 (merge-thread.ts) output shapes ---
+// --- Merge step (merge-thread.ts) output shapes ---
 
 export interface CharacterAppearance {
   chapterIndex: number;
