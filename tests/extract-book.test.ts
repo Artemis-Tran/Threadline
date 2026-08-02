@@ -897,6 +897,15 @@ describe("processChapters", () => {
       ["a refusal", { stop_reason: "refusal", text: null }, /refused/],
       ["truncation", { stop_reason: "max_tokens", text: '{"characters":[{"na' }, /truncated at \d+ tokens/],
       ["no usable text", { stop_reason: "tool_use", text: null }, /no usable text/],
+      // Text is not evidence the answer is finished. A stop reason the seam
+      // could only normalise to "other", carrying parseable JSON, is still a
+      // response the model never said it had completed — writing it would put a
+      // half-answer into the thread wearing a complete one's clothes.
+      [
+        "an unusable stop reason that still carried text",
+        { stop_reason: "tool_use", text: JSON.stringify({ characters: [], relationships: [], events: [] }) },
+        /no usable text \(stop reason: other\)/,
+      ],
     ];
 
     for (const [name, canned, message] of failures) {
@@ -1051,17 +1060,31 @@ describe("processChapters", () => {
   // the stamp, the roster fold, the manifest row — is indifferent to it.
 
   describe("an OpenAI model", () => {
+    const ONE_CHAPTER = book([chapter(4, "One", 900)]);
+
+    // Drive one OpenAI-served chapter through the walk, handing back the run
+    // and what the vendor was asked, so each test below is its assertions and
+    // nothing else.
+    async function runOpenAIChapter(
+      dir: string,
+      canned: CannedOpenAIResponse
+    ): Promise<{ input: ChapterRunInput; requests: CapturedOpenAIRequest[]; run: Promise<void> }> {
+      const plans = planChapters(ONE_CHAPTER, defaultOpts(), dir);
+      const { client, requests } = scriptedOpenAIClient([canned]);
+      const input = runInput({ plans, chunksDir: dir, book: ONE_CHAPTER, client, model: LUNA_MODEL });
+      return { input, requests, run: quiet(() => processChapters(input)) };
+    }
+
+    function writtenMetaAt(dir: string, index: number): { model?: unknown; modelReturned?: unknown; usage: Record<string, unknown> } {
+      return JSON.parse(fs.readFileSync(checkpointPath(dir, index), "utf-8")).meta;
+    }
+
+    const OK = { text: JSON.stringify(extractionOf("Henry Ashford")) };
+
     test("reaches the OpenAI branch, and no Anthropic client is constructed", async () => {
       await withChunksDir(async (dir) => {
-        const b = book([chapter(4, "One", 900)]);
-        const plans = planChapters(b, defaultOpts(), dir);
-        const { client, requests } = scriptedOpenAIClient([
-          { text: JSON.stringify(extractionOf("Henry Ashford")) },
-        ]);
-
-        await quiet(() =>
-          processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
-        );
+        const { requests, run } = await runOpenAIChapter(dir, OK);
+        await run;
 
         // An Anthropic double would have been asked through `messages.create`;
         // this one was asked through `responses.create`, which is the whole
@@ -1075,17 +1098,11 @@ describe("processChapters", () => {
 
     test("stamps the requested registry ID over the dated snapshot OpenAI serves", async () => {
       await withChunksDir(async (dir) => {
-        const b = book([chapter(4, "One", 900)]);
-        const plans = planChapters(b, defaultOpts(), dir);
-        const { client } = scriptedOpenAIClient([{ text: JSON.stringify(extractionOf("Henry Ashford")) }]);
+        await (await runOpenAIChapter(dir, OK)).run;
 
-        await quiet(() =>
-          processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
-        );
-
-        const meta = JSON.parse(fs.readFileSync(checkpointPath(dir, 4), "utf-8")).meta;
         // The reuse guard and the pricing table both look this up, and OpenAI's
         // served string is not a registry ID (ADR-0008).
+        const meta = writtenMetaAt(dir, 4);
         assert.equal(meta.model, "gpt-5.6-luna");
         assert.equal(meta.modelReturned, OPENAI_SERVED_SNAPSHOT);
       });
@@ -1093,19 +1110,13 @@ describe("processChapters", () => {
 
     test("records the reasoning split the same way an Anthropic run does", async () => {
       await withChunksDir(async (dir) => {
-        const b = book([chapter(4, "One", 900)]);
-        const plans = planChapters(b, defaultOpts(), dir);
-        const { client } = scriptedOpenAIClient([
-          { text: JSON.stringify(extractionOf("Henry Ashford")), reasoningTokens: 704 },
-        ]);
-        const input = runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL });
+        const { input, run } = await runOpenAIChapter(dir, { ...OK, reasoningTokens: 704 });
+        await run;
 
-        await quiet(() => processChapters(input));
-
-        const usage = JSON.parse(fs.readFileSync(checkpointPath(dir, 4), "utf-8")).meta.usage;
         // Same key an Anthropic extract carries — one concept under two vendor
         // names is what the seam exists to flatten. It decomposes the output
         // count rather than adding to it, so the billed totals are unmoved.
+        const usage = writtenMetaAt(dir, 4).usage;
         assert.equal(usage.reasoning_tokens, 704);
         assert.equal(usage.output_tokens, 340);
         assert.deepEqual(input.totals, { inputTokens: 1200, outputTokens: 340, apiCalls: 1 });
@@ -1117,19 +1128,13 @@ describe("processChapters", () => {
     // answer puts a non-extraction into the run.
     test("aborts on a content-filtered response as a refusal, not a truncation", async () => {
       await withChunksDir(async (dir) => {
-        const b = book([chapter(4, "One", 900)]);
-        const plans = planChapters(b, defaultOpts(), dir);
-        const { client } = scriptedOpenAIClient([
-          { status: "incomplete", incompleteReason: "content_filter", text: null },
-        ]);
+        const { run } = await runOpenAIChapter(dir, {
+          status: "incomplete",
+          incompleteReason: "content_filter",
+          text: null,
+        });
 
-        await assert.rejects(
-          () =>
-            quiet(() =>
-              processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
-            ),
-          /refused/
-        );
+        await assert.rejects(() => run, /refused/);
         assert.equal(fs.existsSync(checkpointPath(dir, 4)), false);
         assert.equal(fs.existsSync(checkpointPath(dir, 4).replace(/\.json$/, "-truncated.txt")), false);
       });
@@ -1137,20 +1142,28 @@ describe("processChapters", () => {
 
     test("preserves truncated output before aborting, exactly as an Anthropic run does", async () => {
       await withChunksDir(async (dir) => {
-        const b = book([chapter(4, "One", 900)]);
-        const plans = planChapters(b, defaultOpts(), dir);
-        const { client } = scriptedOpenAIClient([
-          { status: "incomplete", incompleteReason: "max_output_tokens", text: '{"characters":[{"na' },
-        ]);
+        const { run } = await runOpenAIChapter(dir, {
+          status: "incomplete",
+          incompleteReason: "max_output_tokens",
+          text: '{"characters":[{"na',
+        });
 
-        await assert.rejects(() =>
-          quiet(() =>
-            processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
-          )
-        );
+        await assert.rejects(() => run);
 
         const truncated = checkpointPath(dir, 4).replace(/\.json$/, "-truncated.txt");
         assert.equal(fs.readFileSync(truncated, "utf-8"), '{"characters":[{"na');
+      });
+    });
+
+    // The vendor-specific half of the same rule the Anthropic table above pins:
+    // a status the seam can only call "other" is not made usable by arriving
+    // with a parseable body attached.
+    test("aborts on a failed status even when it carried parseable text", async () => {
+      await withChunksDir(async (dir) => {
+        const { run } = await runOpenAIChapter(dir, { status: "failed", ...OK });
+
+        await assert.rejects(() => run, /no usable text \(stop reason: other\)/);
+        assert.equal(fs.existsSync(checkpointPath(dir, 4)), false);
       });
     });
   });

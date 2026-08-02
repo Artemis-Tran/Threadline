@@ -51,6 +51,8 @@ const EST_PROMPT_OVERHEAD_TOKENS = 1200;
 const ROSTER_DESCRIPTION_MAX_CHARS = 150;
 const ROSTER_MAX_ALIASES = 8;
 
+// Deliberately not `as const`: the seam takes a plain JSON-schema object, and a
+// deeply-readonly literal would only have to be cast back into one at the call.
 const EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
@@ -98,7 +100,7 @@ const EXTRACTION_SCHEMA = {
   },
   required: ["characters", "relationships", "events"],
   additionalProperties: false,
-} as const;
+};
 
 export function buildSystemPrompt(bookTitle: string | null, roster: RosterEntry[]): string {
   const parts = [
@@ -592,8 +594,8 @@ function writeManifest(
 // The seam reports refusal, truncation and unusable output as ordinary results;
 // this command throws on all three. That mapping is the sharpest edge in going
 // through the seam — get it wrong and a truncated-but-paid-for response is
-// discarded as though it were something else — so each reason is handled
-// explicitly rather than by a default branch.
+// discarded as though it were something else, or a non-answer is written out as
+// an extraction — so only a stop reason of "ok" proceeds.
 export async function extractChapter(
   client: ExtractionClient | undefined,
   book: ParsedBook,
@@ -610,7 +612,7 @@ export async function extractChapter(
       provider: model.provider,
       systemPrompt,
       chapterText: chapter.text,
-      schema: EXTRACTION_SCHEMA as unknown as Record<string, unknown>,
+      schema: EXTRACTION_SCHEMA,
       maxTokens: MAX_TOKENS,
     },
     client
@@ -626,9 +628,14 @@ export async function extractChapter(
     fs.writeFileSync(rawPath, response.text === "" ? "(no text)" : response.text, "utf-8");
     throw new Error(`Chapter ${chapter.index}: output truncated at ${MAX_TOKENS} tokens. Truncated text dumped to: ${rawPath}`);
   }
-  // "ok" with nothing in it is as unusable as an "other" stop reason, and both
-  // are the case that is neither retryable with a bigger budget nor a refusal.
-  if (response.text === "") {
+  // Anything that is not "ok" is unusable, whether or not text came back with
+  // it. Text is not evidence the answer is complete: an OpenAI response with
+  // status "failed" can carry a partial message, and parsing that would write a
+  // half-answer to disk as though it were a genuine extract. This deliberately
+  // reads the stop reason rather than only the text — the seam defines "other"
+  // as output a caller can do nothing with, and taking it at its word is what
+  // keeps a non-extraction out of the thread.
+  if (response.stopReason !== "ok" || response.text === "") {
     throw new Error(`Chapter ${chapter.index}: no usable text (stop reason: ${response.stopReason}).`);
   }
 

@@ -6,7 +6,6 @@ import {
   callExtraction,
   apiErrorMessage,
   apiKeyEnvVar,
-  anthropicReasoningTokens,
   AnthropicExtractionClient,
   OpenAIExtractionClient,
 } from "../src/extraction-call";
@@ -147,6 +146,13 @@ describe("callExtraction response normalisation", () => {
       // ADR-0008 defers to a probe turns on telling them apart.
       assert.equal("reasoningTokens" in result.usage, false);
     }
+  });
+
+  test("keeps a genuine zero, which is a measurement rather than a silence", async () => {
+    const { client } = fakeClient(
+      response({ usage: { ...USAGE, output_tokens_details: { thinking_tokens: 0 } } })
+    );
+    assert.equal((await callExtraction(REQUEST, client)).usage.reasoningTokens, 0);
   });
 });
 
@@ -344,26 +350,16 @@ describe("callExtraction OpenAI response normalisation", () => {
     const { client } = fakeOpenAIClient(openAIResponse());
     assert.equal("reasoningTokens" in (await callExtraction(OPENAI_REQUEST, client)).usage, false);
   });
-});
 
-// Exported for stage 3, which still builds its own Anthropic request (ADR-0008)
-// and would otherwise have to know the vendor's field name itself.
-describe("anthropicReasoningTokens", () => {
-  test("reads the thinking-token detail", () => {
-    assert.equal(anthropicReasoningTokens({ output_tokens_details: { thinking_tokens: 77 } }), 77);
-  });
-
-  test("reads a genuine zero as a measurement", () => {
-    assert.equal(anthropicReasoningTokens({ output_tokens_details: { thinking_tokens: 0 } }), 0);
-  });
-
-  test("returns undefined for a missing, null, or non-numeric detail", () => {
-    assert.equal(anthropicReasoningTokens({}), undefined);
-    assert.equal(anthropicReasoningTokens({ output_tokens_details: null }), undefined);
-    assert.equal(
-      anthropicReasoningTokens({ output_tokens_details: {} as { thinking_tokens: number } }),
-      undefined
+  // Not hypothetical: at low reasoning effort GPT-5.6 reports exactly this, and
+  // the probe that settled the effort question read a zero here as the evidence
+  // that no deliberation happened. Collapsing it to "absent" would have thrown
+  // that answer away.
+  test("keeps a genuine zero, which is a measurement rather than a silence", async () => {
+    const { client } = fakeOpenAIClient(
+      openAIResponse({ usage: { ...USAGE, output_tokens_details: { reasoning_tokens: 0 } } })
     );
+    assert.equal((await callExtraction(OPENAI_REQUEST, client)).usage.reasoningTokens, 0);
   });
 });
 

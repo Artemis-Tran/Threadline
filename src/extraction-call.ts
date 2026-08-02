@@ -154,10 +154,10 @@ export function apiErrorMessage(err: unknown): string | null {
 // OpenAI as reasoning tokens — which is exactly the kind of thing this seam
 // exists to flatten, rather than an OpenAI concern leaking across it.
 //
-// Exported for its own tests rather than for a caller: no longer that extract-book
-// builds its own request, since it does not. Both vendors' spellings are checked
-// directly here so the normalisation stays pinned on either side.
-export function anthropicReasoningTokens(usage: AnthropicUsage): number | undefined {
+// Private, like its OpenAI twin. It was exported while extract-book built its
+// own Anthropic request and had to know the vendor's field name; that caller is
+// gone, and both spellings are pinned through callExtraction instead.
+function anthropicReasoningTokens(usage: AnthropicUsage): number | undefined {
   return asTokenCount(usage.output_tokens_details?.thinking_tokens);
 }
 
