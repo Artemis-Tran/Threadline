@@ -50,9 +50,9 @@ run cheap *within* one model, and this is the boundary of that guarantee.
 ## A chapter extract records the requested model, not the served one
 
 A chapter extract stamps the registry ID that was *requested*, and keeps the
-vendor's returned string beside it. The single-chapter probe did this while it
-had its own call path; `extract-book`, now the only extraction path, does not
-yet.
+vendor's returned string beside it under `modelReturned`. The single-chapter
+probe did this while it had its own call path; `extract-book`, now the only
+extraction path, does it too.
 
 Stamping the returned string is the obvious thing, and it is what the code did
 before OpenAI existed here — so this needs saying, or it will be helpfully
@@ -64,10 +64,30 @@ up in the registry. The requested ID is the one the registry can price and the
 one a resume can match. The served string is worth keeping only so that a
 silently re-pointed alias stays visible.
 
-`extract-book`'s own extracts still stamp the returned string, and record
-nothing alongside it. That is the same hazard, dormant — unremarked only
-because `extract-book` is Anthropic-only, and part of the work of putting it
-behind the seam.
+This was previously recorded here as a hazard lying dormant in `extract-book`,
+on the reasoning that an Anthropic-only path could not hit it. That reasoning
+was wrong, and the correction is worth keeping: Anthropic resolves an alias to a
+dated snapshot in its response too. `--model haiku` had already written 47
+chapter extracts stamped `claude-haiku-4-5-20251001` beside a manifest carrying
+`claude-haiku-4-5`, and because the reuse guard compares the recorded value
+against the resolved flag, that directory rejected all 47 of its own cached
+extracts — on a normal run and on a `--rebuild-manifest` alike. Paid output that
+could be neither resumed against nor rebuilt from. Being one vendor deep is not
+what makes this safe; stamping the requested ID is.
+
+`extract-book` now stamps the requested ID, and a one-off migration
+(`scripts/migrate-extract-model-stamp.ts`) repaired the extracts already
+written. It moved each recorded value to `modelReturned` and wrote the sibling
+manifest's registry ID in its place — metadata only, re-extracting nothing — and
+no-opped on the two runs whose extracts already carried registry IDs. The
+rebuild that had failed on all 47 now succeeds.
+
+The guard itself was not touched, and must not be. Teaching it to accept a dated
+suffix by prefix matching would have repaired every directory at once without a
+migration, and is the wrong move twice over: it reintroduces exactly the
+prefix-sniffing the registry rejects as a second, weaker source of truth about
+model identity — in the one place guarding paid output — and it cannot tell a
+snapshot apart from a genuinely different model whose ID extends another's.
 
 ## Reasoning effort is pinned, at medium
 
