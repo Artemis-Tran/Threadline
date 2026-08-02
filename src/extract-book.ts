@@ -284,9 +284,10 @@ export function indexFromCheckpoint(outPath: string): string {
   return match ? String(Number(match[1])) : "<index>";
 }
 
-// The model a checkpoint was extracted with (from its meta). Null when the file
-// is unreadable or predates model stamping — callers treat null as "can't
-// verify" rather than a mismatch, so legacy checkpoints aren't force-invalidated.
+// The registry ID a checkpoint's extraction was requested with (from its meta
+// `model`, never its `modelReturned`). Null when the file is unreadable or
+// predates model stamping — callers treat null as "can't verify" rather than a
+// mismatch, so legacy checkpoints aren't force-invalidated.
 export function readCheckpointModel(outPath: string): string | null {
   try {
     const meta = (JSON.parse(fs.readFileSync(outPath, "utf-8")) as { meta?: { model?: unknown } }).meta;
@@ -672,7 +673,14 @@ export async function extractChapter(
 
   const checkpoint = {
     meta: {
-      model: response.model,
+      // The registry ID that was *requested*, not the string the vendor
+      // returned (ADR-0008). The requested ID is the one the registry can price
+      // and the one a resume can match; a served string survives neither, since
+      // a vendor resolving an alias to a dated snapshot records an ID the
+      // registry has never heard of. The served string is kept alongside so a
+      // silently re-pointed alias stays visible.
+      model,
+      modelReturned: response.model,
       chapterIndex: chapter.index,
       chapterTitle: chapter.title,
       chapterWordCount: chapter.wordCount,

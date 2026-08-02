@@ -121,10 +121,16 @@ interface CannedResponse {
   usage?: Anthropic.Usage;
 }
 
+// What Anthropic answers a `claude-sonnet-5` request with: an alias resolved to
+// a dated snapshot. It is not a registry ID, so an extract stamped with it can
+// be neither priced nor matched by the reuse guard — which is the whole reason
+// the requested ID is what gets stamped.
+const SERVED_SNAPSHOT = "claude-sonnet-5-20260101";
+
 function cannedResponse(canned: CannedResponse) {
   const text = canned.text === undefined ? JSON.stringify(extractionOf("Henry")) : canned.text;
   return {
-    model: "claude-sonnet-5-20260101",
+    model: SERVED_SNAPSHOT,
     stop_reason: canned.stop_reason === undefined ? "end_turn" : canned.stop_reason,
     content: text === null ? [] : [{ type: "text" as const, text, citations: null }],
     usage: canned.usage ?? anthropicUsage(),
@@ -386,11 +392,12 @@ describe("checkpointPath / indexFromCheckpoint", () => {
 describe("assertCheckpointModelsMatch", () => {
   const chapters = [chapter(0, "Chapter 1", 1500)];
 
-  function withCheckpoint(model: string | null, run: (dir: string) => void): void {
+  // `meta` verbatim, so a test can write the pre-migration shape (a served
+  // snapshot under `model`) as well as the post-migration one.
+  function withCheckpoint(meta: Record<string, unknown> | null, run: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-model-"));
     try {
-      const body =
-        model === null ? "{}" : JSON.stringify({ meta: { model }, extraction: { characters: [] } });
+      const body = meta === null ? "{}" : JSON.stringify({ meta, extraction: { characters: [] } });
       fs.writeFileSync(checkpointPath(dir, 0), body);
       run(dir);
     } finally {
@@ -399,16 +406,37 @@ describe("assertCheckpointModelsMatch", () => {
   }
 
   test("passes when a cached checkpoint's model matches --model", () => {
-    withCheckpoint("claude-sonnet-5", (dir) => {
+    withCheckpoint({ model: "claude-sonnet-5" }, (dir) => {
       const plans = planChapters(book(chapters), defaultOpts(), dir);
       assert.doesNotThrow(() => assertCheckpointModelsMatch(plans, dir, "claude-sonnet-5"));
     });
   });
 
   test("throws when a cached checkpoint was written by a different model", () => {
-    withCheckpoint("claude-sonnet-5", (dir) => {
+    withCheckpoint({ model: "claude-sonnet-5" }, (dir) => {
       const plans = planChapters(book(chapters), defaultOpts(), dir);
       assert.throws(() => assertCheckpointModelsMatch(plans, dir, "claude-haiku-4-5"), /Model mismatch/);
+    });
+  });
+
+  // The comparison is exact, and stays exact. A dated snapshot is not the
+  // registry ID it was resolved from, and teaching the guard to accept one by
+  // prefix would put a second, weaker source of truth about model identity in
+  // the one place guarding paid output — and could not tell a snapshot from a
+  // different model whose ID merely extends another's.
+  test("throws on a checkpoint stamped with the vendor's dated snapshot ID", () => {
+    withCheckpoint({ model: "claude-sonnet-5-20260101" }, (dir) => {
+      const plans = planChapters(book(chapters), defaultOpts(), dir);
+      assert.throws(() => assertCheckpointModelsMatch(plans, dir, "claude-sonnet-5"), /Model mismatch/);
+    });
+  });
+
+  // The payoff of stamping the requested ID: the guard matches on `model` and
+  // is unbothered by whatever the vendor called itself.
+  test("passes when the requested ID matches and a served snapshot sits beside it", () => {
+    withCheckpoint({ model: "claude-sonnet-5", modelReturned: "claude-sonnet-5-20260101" }, (dir) => {
+      const plans = planChapters(book(chapters), defaultOpts(), dir);
+      assert.doesNotThrow(() => assertCheckpointModelsMatch(plans, dir, "claude-sonnet-5"));
     });
   });
 
@@ -420,14 +448,14 @@ describe("assertCheckpointModelsMatch", () => {
   });
 
   test("does not check checkpoints that will be re-extracted (--force)", () => {
-    withCheckpoint("claude-sonnet-5", (dir) => {
+    withCheckpoint({ model: "claude-sonnet-5" }, (dir) => {
       const plans = planChapters(book(chapters), defaultOpts({ forceAll: true }), dir);
       assert.doesNotThrow(() => assertCheckpointModelsMatch(plans, dir, "claude-haiku-4-5"));
     });
   });
 
   test("in rebuild mode, forced-index checkpoints are loaded from cache so they ARE checked", () => {
-    withCheckpoint("claude-sonnet-5", (dir) => {
+    withCheckpoint({ model: "claude-sonnet-5" }, (dir) => {
       const plans = planChapters(book(chapters), defaultOpts({ forceAll: true }), dir);
       // rebuildMode = true: nothing is extracted, so a mismatched forced index must still throw.
       assert.throws(() => assertCheckpointModelsMatch(plans, dir, "claude-haiku-4-5", true), /Model mismatch/);
@@ -733,8 +761,9 @@ describe("extractChapter", () => {
   // Read back off disk, so the assertions are about the file a later stage
   // actually gets — not about an in-memory object that never round-tripped.
   type WrittenUsage = { input_tokens?: unknown; output_tokens?: unknown; reasoning_tokens?: unknown };
+  type WrittenMeta = { model?: unknown; modelReturned?: unknown; usage: WrittenUsage };
 
-  async function writtenUsage(responseUsage: Anthropic.Usage): Promise<WrittenUsage> {
+  async function writtenMeta(responseUsage: Anthropic.Usage): Promise<WrittenMeta> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-extract-"));
     try {
       const outPath = path.join(dir, "idx004-extract.json");
@@ -746,12 +775,28 @@ describe("extractChapter", () => {
         outPath,
         "claude-sonnet-5"
       );
-      const checkpoint = JSON.parse(fs.readFileSync(outPath, "utf-8")) as { meta: { usage: WrittenUsage } };
-      return checkpoint.meta.usage;
+      return (JSON.parse(fs.readFileSync(outPath, "utf-8")) as { meta: WrittenMeta }).meta;
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  async function writtenUsage(responseUsage: Anthropic.Usage): Promise<WrittenUsage> {
+    return (await writtenMeta(responseUsage)).usage;
+  }
+
+  // The stamping ADR-0008 chose, and the reason this run's own extracts are
+  // reusable at all: `model` is the registry ID that was asked for, so the reuse
+  // guard and the pricing table can both look it up.
+  test("stamps the requested registry ID, not the string the vendor served", async () => {
+    const meta = await writtenMeta(anthropicUsage());
+    assert.equal(meta.model, "claude-sonnet-5");
+  });
+
+  test("keeps the vendor's returned string beside it", async () => {
+    const meta = await writtenMeta(anthropicUsage());
+    assert.equal(meta.modelReturned, SERVED_SNAPSHOT);
+  });
 
   test("stamps the reasoning split under the seam's normalised name", async () => {
     const written = await writtenUsage(anthropicUsage({ output_tokens_details: { thinking_tokens: 214 } }));
