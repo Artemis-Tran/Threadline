@@ -10,15 +10,22 @@ the authority on which vendor serves a row, stated per row rather than sniffed
 from an ID prefix, so the allowlist that already exists does not acquire a
 weaker rival.
 
-Stage 2 goes through the seam. Stage 3 still has its own Anthropic call path
-and rejects a non-Anthropic extraction model up front, before any charge. That
-is a deliberate staging of the work — wiring stage 3 up is gated on seeing real
-output from a second provider first.
+Nothing goes through the seam yet. `extract-book` still has its own Anthropic
+call path and rejects a non-Anthropic extraction model up front, before any
+charge. That is a deliberate staging of the work — wiring it up is gated on
+seeing real output from a second provider first.
+
+The single-chapter probe went through the seam, and was how that output was
+first seen. It no longer does: it was a second extraction path with its own
+schema and prompt, and has been reduced to a translator that forwards to
+`extract-book`. So the seam has no caller until `extract-book` moves behind it,
+and OpenAI extraction is unreachable in the meantime.
 
 ## One extraction model per run
 
-A run is pinned to exactly one extraction model, and stage 3 fails closed if
-`--model` would reuse chapter extracts written by a different one. It has to: a
+A run is pinned to exactly one extraction model, and `extract-book` fails
+closed if `--model` would reuse chapter extracts written by a different one. It
+has to: a
 cached extract is loaded verbatim into the roster and never re-extracted, so
 mixing would blend two models' output invisibly. The escape hatches are
 `--out-dir` for a separate directory and `--force` to re-extract.
@@ -42,22 +49,25 @@ run cheap *within* one model, and this is the boundary of that guarantee.
 
 ## A chapter extract records the requested model, not the served one
 
-Stage 2 stamps the registry ID that was *requested*, and keeps the vendor's
-returned string beside it.
+A chapter extract stamps the registry ID that was *requested*, and keeps the
+vendor's returned string beside it. The single-chapter probe did this while it
+had its own call path; `extract-book`, now the only extraction path, does not
+yet.
 
 Stamping the returned string is the obvious thing, and it is what the code did
 before OpenAI existed here — so this needs saying, or it will be helpfully
 changed back. OpenAI resolves an alias to a dated snapshot in its response.
 Stamp that, and the extract records an ID the registry has never heard of:
-stage 3's reuse guard rejects its own cached extracts on the very next run, and
+the reuse guard rejects its own cached extracts on the very next run, and
 the comparison tooling cannot price them, because both look the recorded string
 up in the registry. The requested ID is the one the registry can price and the
 one a resume can match. The served string is worth keeping only so that a
 silently re-pointed alias stays visible.
 
-Stage 3's own extracts still stamp the returned string, and record nothing
-alongside it. That is the same hazard, dormant — unremarked only because stage
-3 is Anthropic-only, and part of the work of putting stage 3 behind the seam.
+`extract-book`'s own extracts still stamp the returned string, and record
+nothing alongside it. That is the same hazard, dormant — unremarked only
+because `extract-book` is Anthropic-only, and part of the work of putting it
+behind the seam.
 
 ## Reasoning effort is pinned, at medium
 
@@ -89,7 +99,7 @@ estimate is unmeasured; one live chapter corrects it, and the vendor's reported
 output count already includes reasoning tokens, so no separate accounting is
 needed.
 
-Stage 2's token ceiling is 16000, and at medium effort the reasoning and the
-answer draw on it together, so a long chapter is likelier to come back
+The per-chapter token ceiling is 16000, and at medium effort the reasoning and
+the answer draw on it together, so a long chapter is likelier to come back
 truncated than it would at low effort. If a probe truncates, that is the cause,
 and it says nothing about the model's extraction quality.

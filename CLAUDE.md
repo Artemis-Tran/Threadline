@@ -10,18 +10,32 @@ code, issues, and tests rather than drifting to synonyms.
 
 ## Where things stand
 
-Pipeline stages 1–4 are complete and stage 5 has shipped. All five are
-verified against The Potter's Path.
+There is a **three-step pipeline**, two **tools** beside it, and an
+**application**. All of it is shipped and verified against The Potter's Path.
 
-1. ✅ EPUB parsing → clean chapter text (`src/parse-epub.ts`)
-2. ✅ Single-chapter extraction, for eyeballing raw output
-   (`src/extract-chapter.ts`) — runs on either provider, Anthropic or OpenAI
-3. ✅ Per-chapter extraction with a running roster (`src/extract-book.ts`) —
-   Anthropic-only; a non-Anthropic model is rejected before any API call
-4. ✅ Merge/dedupe across chapter extracts (`src/merge-thread.ts`) — writes
+The pipeline — what `npm run book` chains, and what it announces as `[1/3]`,
+`[2/3]`, `[3/3]`:
+
+1. ✅ **Parse** — EPUB → clean chapter text (`src/parse-epub.ts`)
+2. ✅ **Extract** — per-chapter extraction with a running roster
+   (`src/extract-book.ts`) → `output/{slug}-chunks/`. Anthropic-only; a
+   non-Anthropic model is rejected before any API call
+3. ✅ **Merge** — dedupe across chapter extracts (`src/merge-thread.ts`) →
    `output/{slug}-thread.json`
-5. ✅ Static wiki SPA (`web/`) — chapter-cap browsing over Characters and a
-   Timeline, deployed to GitHub Pages
+
+The tools, neither of which is a pipeline step:
+
+- ✅ **Single-chapter probe** (`src/extract-chapter.ts`) — extract one chapter
+  and eyeball it before paying for a book. A thin wrapper: it translates a
+  chapter index into a one-chapter extraction window and spawns the extract
+  step, so the probe shares its schema, prompt, roster, and cost gate
+- ✅ **A/B comparison** (`src/compare-extractions.ts`) — diff and price two
+  extraction-run directories
+
+The application:
+
+- ✅ **Static wiki SPA** (`web/`) — chapter-cap browsing over Characters and a
+  Timeline, deployed to GitHub Pages
 
 Keep this list current as things change, so future sessions know where the
 work actually stands.
@@ -29,12 +43,12 @@ work actually stands.
 ## Commands
 
 ```
-npm run parse                 # stage 1
-npm run extract               # stage 2, single chapter
-npm run extract-book          # stage 3
-npm run merge-thread          # stage 4
-npm run book                  # stages 1–4 end to end
-npm run compare-extractions -- <dirA> <dirB>   # A/B two extraction runs
+npm run book                  # the whole pipeline: parse → extract → merge
+npm run parse                 # pipeline step 1
+npm run extract-book          # pipeline step 2
+npm run merge-thread          # pipeline step 3
+npm run extract               # tool: single-chapter probe
+npm run compare-extractions -- <dirA> <dirB>   # tool: A/B two extraction runs
 npm test                      # pipeline tests
 npm run web                   # web dev server
 npm run test:web              # web tests
@@ -43,8 +57,18 @@ npm run build -w web          # → web/dist
 
 Notable flags: `--model <id>` on the extraction commands (default
 `claude-sonnet-5`; shorthands `sonnet`/`haiku`/`opus`/`luna`/`terra`),
-`--out-dir <path>` and `--roster <path>` on `extract-book`, and
+`--list`, `--out-dir <path>` and `--roster <path>` on `extract-book`, and
 `--progression-order <path>` on `merge-thread`.
+
+`npm run extract -- <parsed-json> <index|--list> [--model <id>] [--roster
+<path>]` is a translator, not a second extraction path. An index becomes
+`--from N --to N --force N` into `output/{slug}-probe-{model}/`, and
+`extract-book` is spawned with inherited stdio so its cost-confirmation prompt
+reaches the terminal. Consequences worth knowing: a probe goes through the cost
+gate, always re-extracts (the gate is the only guard against paying twice),
+writes a manifest the A/B comparison tool can read, and can never touch a
+book's real `{slug}-chunks/` directory. `--list` maps array indices to chapter
+titles, makes no API call, and is free.
 
 `--roster` takes a JSON array of roster entries (the shape of a manifest's
 `roster` field) and starts the run from it instead of accumulating one by
@@ -61,18 +85,20 @@ which vendor serves a row. An unpriced or misspelled model is rejected before
 any API call, and reusing one model's cached extracts under a different
 `--model` fails closed.
 
-`luna`/`terra` are OpenAI GPT-5.6 rows and run on **stage 2 only** — stage 3
-still has its own Anthropic call path and rejects a non-Anthropic model up
-front. Neither is a default; Sonnet still is (ADR-0004), and Luna's extraction
-quality is unmeasured. Both need `OPENAI_API_KEY`; the credential check is
-provider-derived, so an Anthropic run never asks for one.
+`luna`/`terra` are OpenAI GPT-5.6 rows and **currently cannot be run at all**:
+`extract-book` still has its own Anthropic call path and rejects a
+non-Anthropic model up front, and the probe forwards to it. The rows stay in
+the registry because putting `extract-book` behind `src/extraction-call.ts` is
+pending work (ADR-0008), and that seam is where their OpenAI path lives.
+Neither is a default; Sonnet still is (ADR-0004), and Luna's extraction quality
+is unmeasured.
 
 ## Tech stack
 
 - Node.js + TypeScript, `tsx` to run, `epub2` for EPUB parsing
 - `@anthropic-ai/sdk` and `openai` for extraction, behind the call seam in
-  `src/extraction-call.ts` apart from stage 3's own client (ADR-0008);
-  `dotenv` for the API keys
+  `src/extraction-call.ts` — which `extract-book` does not yet use, since it
+  still builds its own Anthropic client (ADR-0008); `dotenv` for the API keys
 - Web (`web/` only): Vite + React + react-router-dom (HashRouter), IndexedDB
   via `idb`, plain CSS modules. No Tailwind, no server, no SQLite/ORM.
 
@@ -88,8 +114,8 @@ provider-derived, so an Anthropic run never asks for one.
 
 ## Conventions
 
-- Every stage writes inspectable JSON to `/output` before the next stage reads
-  it — never pipe one stage straight into the next (ADR-0006).
+- Every pipeline step writes inspectable JSON to `/output` before the next step
+  reads it — never pipe one step straight into the next (ADR-0006).
 - The merged output is `{bookname}-thread.json`. "Skin" is dead legacy naming.
 - **Naming drift, known and accepted:** the canonical term is *chapter
   extract*, but the directory is `{slug}-chunks/`, the files are
@@ -111,12 +137,15 @@ provider-derived, so an Anthropic run never asks for one.
 - Don't call the Anthropic API in bulk — looping over many chapters or many
   books — without confirming first. That's where real money gets spent.
 - If output looks broken (empty, malformed JSON, suspiciously short chapter
-  text), stop and flag it rather than running the next stage on bad data.
+  text), stop and flag it rather than running the next step on bad data.
 - Off-limits everywhere: authentication, any server or backend (static client
   hosting only), multi-user features, EPUB upload into the web app, and LLM
   calls from the web app. See ADR-0002 for why these aren't merely unbuilt.
-- Each stage of work is built, reviewed, and validated
-  before moving on.
+- Each piece of work is built, reviewed, and validated before moving on. Scope
+  a session to a real boundary — a pipeline step, a tool, the web app, or a
+  seam between them — not to a stage number. Work that changes how extraction
+  calls a vendor touches the extract step and the probe together, because they
+  were never two separate things.
 
 ## Deferred work
 

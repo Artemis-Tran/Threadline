@@ -16,8 +16,9 @@ Threadline is a two-part prototype:
    centerpiece is a **chapter cap** — "show me the world as of chapter N" — so
    you can catch up to exactly where you stopped reading without spoilers.
 
-Each pipeline stage writes inspectable JSON to `/output` before the next stage
-consumes it, so a bad parse can be caught before any API budget is spent on it.
+The pipeline is three steps — parse, extract, merge. Each writes inspectable
+JSON to `/output` before the next consumes it, so a bad parse can be caught
+before any API budget is spent on it.
 
 ---
 
@@ -42,9 +43,9 @@ library will already contain the example book — click it to explore.
 
 ## Generating a thread from your own EPUB
 
-This is the part that costs money — the extraction stages make real Claude API
-calls (roughly **$0.20–$2 per book** depending on model choice). Stage 3 shows
-a cost estimate and asks for confirmation before spending anything.
+This is the part that costs money — the extract step makes real Claude API
+calls (roughly **$0.20–$2 per book** depending on model choice). It shows a
+cost estimate and asks for confirmation before spending anything.
 
 ### 1. Set up your API key
 
@@ -74,17 +75,17 @@ npm run book -- input/your-book.epub --dry-run
 The result is written to `output/{slug}-thread.json`. Import that file into the
 web app (see below).
 
-### 3. Or run each stage manually
+### 3. Or run each step manually
 
-The one-shot command above just chains these three stages. Run them by hand if
-you need finer control (e.g. re-extracting a single chapter):
+The one-shot command above just chains these three steps. Run them by hand if
+you need finer control:
 
 ```
 # Parse EPUB → clean chapter text (output/{slug}-parsed.json)
 npm run parse -- input/your-book.epub
 
-# Inspect the index ↔ chapter mapping (no API call)
-npm run extract -- output/your-book-parsed.json --list
+# Inspect the index ↔ chapter mapping (no API call, costs nothing)
+npm run extract-book -- output/your-book-parsed.json --list
 
 # Extract the whole book, checkpointed to output/{slug}-chunks/
 npm run extract-book -- output/your-book-parsed.json --dry-run   # preview cost first
@@ -93,6 +94,23 @@ npm run extract-book -- output/your-book-parsed.json
 # Merge chunks into the final thread (output/{slug}-thread.json)
 npm run merge-thread -- output/your-book-parsed.json
 ```
+
+### Probing a single chapter
+
+Before paying for a whole book, extract one chapter and read the result:
+
+```
+npm run extract -- output/your-book-parsed.json --list   # find the chapter index
+npm run extract -- output/your-book-parsed.json 8
+```
+
+This is a thin wrapper around `extract-book`: it translates the index into a
+one-chapter extraction window and forwards everything else, so the probe sends
+the same request a book run sends and goes through the same cost confirmation.
+Output lands in `output/{slug}-probe-{model}/`, keyed by model so probing a
+second one never overwrites the first, and readable by `compare-extractions`.
+A repeat probe on the same chapter re-extracts — the confirmation prompt is
+what stops you paying twice by accident.
 
 **Trying a cheaper model.** Extraction defaults to `claude-sonnet-5`, but any
 command that hits the API takes `--model <id>` (a full id, or the shorthands
@@ -150,8 +168,8 @@ deep links work) and remembered per-book across visits.
 | --- | --- |
 | `npm run book -- input/book.epub [--dry-run]` | One-shot parse → extract → merge |
 | `npm run parse -- input/book.epub` | Parse an EPUB to chapter JSON |
-| `npm run extract -- output/book-parsed.json <index\|--list>` | Extract/inspect a single chapter |
-| `npm run extract-book -- output/book-parsed.json [flags]` | Full-book extraction (`--dry-run` previews cost) |
+| `npm run extract-book -- output/book-parsed.json [flags]` | Full-book extraction (`--dry-run` previews cost, `--list` shows chapter indices) |
+| `npm run extract -- output/book-parsed.json <index\|--list>` | Probe a single chapter (wraps `extract-book`) |
 | `npm run merge-thread -- output/book-parsed.json [flags]` | Merge chunks into the thread |
 | `npm run compare-extractions -- <dirA> <dirB>` | A/B two chunk dirs (counts, roster, cost) |
 | `npm run web` | Run the web app dev server |
@@ -159,7 +177,7 @@ deep links work) and remembered per-book across visits.
 | `npm run test:web` | Run the web test suite |
 | `npm run build` | Compile the pipeline TypeScript to `dist/` |
 
-Useful `extract-book` flags: `--from N` / `--to N` / `--skip 3,5`
+Useful `extract-book` flags: `--list` / `--from N` / `--to N` / `--skip 3,5`
 `--force [12,13]` / `--yes` / `--rebuild-manifest` / `--model <id>` /
 `--out-dir <path>` / `--roster <path>`. Useful `merge-thread` / `book` flags:
 `--out <path>` / `--progression-order <path>`. `book` also accepts
