@@ -232,12 +232,13 @@ describe("callExtraction OpenAI request shaping", () => {
   test("pins reasoning effort rather than leaving it unset", async () => {
     // Pinned, not defaulted: reasoning tokens bill as output and share the
     // answer's budget, so the effort has to be a decision the registry's output
-    // estimate is sized against. Set to medium against the prior finding that
-    // cheap models produce roster noise on this task — see the seam's comment.
+    // estimate is sized against. Low is the measured winner — medium spent 382
+    // reasoning tokens for an identical character set — and pinning it still
+    // matters even though the value now differs from the vendor's default.
     const { client, calls } = fakeOpenAIClient(openAIResponse());
     await callExtraction(OPENAI_REQUEST, client);
 
-    assert.equal(calls[0].reasoning?.effort, "medium");
+    assert.equal(calls[0].reasoning?.effort, "low");
   });
 
   test("passes the same schema object both vendors get, unmodified", async () => {

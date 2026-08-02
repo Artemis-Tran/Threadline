@@ -35,8 +35,9 @@ export interface ExtractionUsage {
   //
   // Absent, never zero, when the vendor didn't report the detail. "Nothing was
   // measured" and "the model reasoned for nothing" are different facts, and the
-  // medium-versus-low effort question ADR-0008 defers to a probe is decided by
-  // exactly this number — a zero standing in for silence would settle it wrong.
+  // medium-versus-low effort question was settled by exactly this number — low
+  // reported a real zero here, which a zero standing in for silence would have
+  // been indistinguishable from.
   reasoningTokens?: number;
 }
 
@@ -113,21 +114,24 @@ export type ExtractionClient = AnthropicExtractionClient | OpenAIExtractionClien
 // Strict mode requires the schema be named; the name is not otherwise used.
 const OPENAI_SCHEMA_NAME = "chapter_extraction";
 
-// GPT-5.6 takes none/low/medium/high/xhigh/max (the family dropped "minimal")
-// and defaults to medium, which is what we pin.
+// GPT-5.6 takes none/low/medium/high/xhigh/max (the family dropped "minimal").
+// The family defaults to medium; we pin low, so the pin is now load-bearing
+// rather than a restatement of the default.
 //
-// This is a deliberate departure from the ticket, which specified the lowest
-// setting on the grounds that extraction is mechanical read-and-structure work.
-// The counter-argument won: the established failure mode for a cheap model on
-// this task is roster noise — walk-ons promoted to characters, one person split
-// across several entries (ADR-0004) — and that is a judgment failure, which
-// deliberation is a plausible lever against. Nobody has tested either position,
-// and the first Luna probe is what settles it.
+// Low was medium's rival on argument and beat it on measurement. The argued case
+// for medium was that the established cheap-model failure on this task is roster
+// noise — walk-ons promoted to characters, one person split across several
+// entries (ADR-0004) — a judgment failure that deliberation is a plausible lever
+// against. The Luna probe ran one chapter at both efforts: medium spent 382
+// reasoning tokens for a bit-for-bit identical character set, same six names and
+// same three walk-on promotions. The noise medium was bought to suppress is
+// identical at low, so it does not earn its price.
 //
-// The cost is real and is priced in: reasoning tokens bill as output and spend
-// the same budget the answer needs, so the registry's output estimate for these
-// rows is set high enough to keep the gate a ceiling.
-const OPENAI_REASONING_EFFORT = "medium";
+// Still a constant and not a flag: reasoning tokens bill as output and spend the
+// same budget the answer needs, so effort has to be a level the registry's
+// output estimate is sized against rather than something a run can move out from
+// under the cost gate (ADR-0008).
+const OPENAI_REASONING_EFFORT = "low";
 
 const API_KEY_ENV_VARS: Record<Provider, string> = {
   anthropic: "ANTHROPIC_API_KEY",
