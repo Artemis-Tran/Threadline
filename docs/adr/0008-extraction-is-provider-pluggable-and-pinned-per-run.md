@@ -10,16 +10,27 @@ the authority on which vendor serves a row, stated per row rather than sniffed
 from an ID prefix, so the allowlist that already exists does not acquire a
 weaker rival.
 
-Nothing goes through the seam yet. `extract-book` still has its own Anthropic
-call path and rejects a non-Anthropic extraction model up front, before any
-charge. That is a deliberate staging of the work — wiring it up is gated on
-seeing real output from a second provider first.
+`extract-book` goes through the seam, and constructs no vendor client of its
+own. Since the single-chapter probe was reduced to a translator that forwards to
+`extract-book`, that makes the seam the sole extraction path: every call the
+pipeline makes, on either vendor, is made there.
 
-The single-chapter probe went through the seam, and was how that output was
-first seen. It no longer does: it was a second extraction path with its own
-schema and prompt, and has been reduced to a translator that forwards to
-`extract-book`. So the seam has no caller until `extract-book` moves behind it,
-and OpenAI extraction is unreachable in the meantime.
+This was staged rather than built at once. The seam existed first with no
+caller, and `extract-book` rejected a non-Anthropic extraction model up front,
+before any charge — wiring it up was deliberately gated on seeing real output
+from a second provider. The gate was passed by the single-chapter probe, which
+went through the seam while it still had its own call path, and the guard and
+its tests are now gone. Going through the seam is what removed it; there was
+never a flag to work around it.
+
+Two things changed shape in a chapter extract's `meta` as a consequence, both
+because the seam reports normalised results rather than vendor ones. `stopReason`
+records the seam's vocabulary (`ok`, `refusal`, `max_tokens`, `other`) rather
+than the vendor's own word, so the field means one thing across providers. And
+`usage` carries the two billed counts plus the reasoning split, under the
+snake_case keys it has always used on disk and that `compare-extractions` reads
+to price a run — but no longer the vendor's surrounding fields (cache reads,
+service tier), which nothing read.
 
 ## One extraction model per run
 

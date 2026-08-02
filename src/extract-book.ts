@@ -1,5 +1,4 @@
 import "dotenv/config";
-import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
@@ -18,29 +17,13 @@ import {
 } from "./types";
 import { sanitizeName, sanitizeAliases, findIdentityMatch } from "./identity";
 import { DEFAULT_MODEL, resolveModel, ModelInfo, ModelRates } from "./models";
-import { anthropicReasoningTokens } from "./extraction-call";
-
-// The slice of an Anthropic client stage 3 uses, declared structurally for the
-// reason given on AnthropicExtractionClient in ./extraction-call — a test can
-// inject a canned response without standing up a real client. It is a separate
-// declaration because stage 3 reads the vendor's full usage object, which the
-// seam's narrower response type does not carry.
-//
-// This is not stage 3 going through the seam: it still builds its own request
-// and reads its own vendor response (ADR-0008). It is only what makes the
-// extract writer testable offline.
-export interface BookExtractionClient {
-  messages: {
-    create(body: Anthropic.MessageCreateParamsNonStreaming): Promise<BookExtractionResponse>;
-  };
-}
-
-interface BookExtractionResponse {
-  model: string;
-  stop_reason: string | null;
-  content: Anthropic.Message["content"];
-  usage: Anthropic.Message["usage"];
-}
+import {
+  callExtraction,
+  apiErrorMessage,
+  apiKeyEnvVar,
+  ExtractionClient,
+  ExtractionUsage,
+} from "./extraction-call";
 
 export interface Totals {
   inputTokens: number;
@@ -542,22 +525,6 @@ export function estimateCostUsd(plans: ChapterPlan[], model: ModelInfo): number 
   return (inputTokens * model.rates.inputUsdPerMTok + outputTokens * model.rates.outputUsdPerMTok) / 1e6;
 }
 
-// Extraction still builds its own Anthropic request here rather than going
-// through the extraction seam (ADR-0008), so a registry row served by another
-// vendor would end up as a foreign model ID inside an Anthropic request. Reject
-// it up front rather than partway into a book.
-//
-// This is the only extraction path there is — the single-chapter probe forwards
-// here — so the message must not point anywhere as a workaround. It cannot be
-// worked around; putting this command behind the seam is what removes it.
-export function assertProviderSupported(model: ModelInfo): void {
-  if (model.provider !== "anthropic") {
-    throw new Error(
-      `${model.id} is served by ${model.provider}, and extraction only supports Anthropic models for now.`
-    );
-  }
-}
-
 export function planStatus(p: ChapterPlan): string {
   if (!p.narrative) return `skip:${p.skipReason}`;
   if (p.willExtract) return "extract";
@@ -622,54 +589,59 @@ function writeManifest(
   fs.writeFileSync(path.join(chunksDir, fileName), JSON.stringify(manifest, null, 2), "utf-8");
 }
 
+// The seam reports refusal, truncation and unusable output as ordinary results;
+// this command throws on all three. That mapping is the sharpest edge in going
+// through the seam — get it wrong and a truncated-but-paid-for response is
+// discarded as though it were something else — so each reason is handled
+// explicitly rather than by a default branch.
 export async function extractChapter(
-  client: BookExtractionClient,
+  client: ExtractionClient | undefined,
   book: ParsedBook,
   chapter: ParsedChapter,
   roster: RosterEntry[],
   outPath: string,
-  model: string
-): Promise<{ extraction: Extraction; usage: Anthropic.Usage }> {
+  model: ModelInfo
+): Promise<{ extraction: Extraction; usage: ExtractionUsage }> {
   const systemPrompt = buildSystemPrompt(book.title, roster);
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: MAX_TOKENS,
-    system: systemPrompt,
-    output_config: {
-      format: { type: "json_schema", schema: EXTRACTION_SCHEMA },
+  const response = await callExtraction(
+    {
+      model: model.id,
+      provider: model.provider,
+      systemPrompt,
+      chapterText: chapter.text,
+      schema: EXTRACTION_SCHEMA as unknown as Record<string, unknown>,
+      maxTokens: MAX_TOKENS,
     },
-    messages: [{ role: "user", content: chapter.text }],
-  });
+    client
+  );
 
-  const textBlock = response.content.find((b) => b.type === "text");
-
-  if (response.stop_reason === "refusal") {
-    throw new Error(`Chapter ${chapter.index}: model refused (stop_reason: refusal).`);
+  if (response.stopReason === "refusal") {
+    throw new Error(`Chapter ${chapter.index}: model refused (stop reason: refusal).`);
   }
-  if (response.stop_reason === "max_tokens") {
+  if (response.stopReason === "max_tokens") {
     // Preserve the truncated output for inspection, mirroring the JSON-parse
     // failure path below, so a truncation isn't a silent data loss.
     const rawPath = outPath.replace(/\.json$/, "-truncated.txt");
-    fs.writeFileSync(rawPath, textBlock?.text ?? "(no text block)", "utf-8");
+    fs.writeFileSync(rawPath, response.text === "" ? "(no text)" : response.text, "utf-8");
     throw new Error(`Chapter ${chapter.index}: output truncated at ${MAX_TOKENS} tokens. Truncated text dumped to: ${rawPath}`);
   }
-  if (!textBlock) {
-    throw new Error(`Chapter ${chapter.index}: no text block (stop_reason: ${response.stop_reason}).`);
+  // "ok" with nothing in it is as unusable as an "other" stop reason, and both
+  // are the case that is neither retryable with a bigger budget nor a refusal.
+  if (response.text === "") {
+    throw new Error(`Chapter ${chapter.index}: no usable text (stop reason: ${response.stopReason}).`);
   }
 
   let extraction: Extraction;
   try {
-    extraction = JSON.parse(textBlock.text);
+    extraction = JSON.parse(response.text);
   } catch (err) {
     const rawPath = outPath.replace(/\.json$/, "-raw.txt");
-    fs.writeFileSync(rawPath, textBlock.text, "utf-8");
+    fs.writeFileSync(rawPath, response.text, "utf-8");
     throw new Error(
       `Chapter ${chapter.index}: response was not valid JSON despite structured outputs (${(err as Error).message}). Raw text dumped to: ${rawPath}`
     );
   }
-
-  const reasoningTokens = anthropicReasoningTokens(response.usage);
 
   const checkpoint = {
     meta: {
@@ -679,24 +651,28 @@ export async function extractChapter(
       // a vendor resolving an alias to a dated snapshot records an ID the
       // registry has never heard of. The served string is kept alongside so a
       // silently re-pointed alias stays visible.
-      model,
-      modelReturned: response.model,
+      model: model.id,
+      modelReturned: response.modelReturned,
       chapterIndex: chapter.index,
       chapterTitle: chapter.title,
       chapterWordCount: chapter.wordCount,
       rosterSize: roster.length,
       systemPrompt,
-      stopReason: response.stop_reason,
-      // The vendor's usage object verbatim — the billed counts the manifest
-      // sums are unchanged — plus the reasoning split under the seam's
-      // normalised name, so that one key at least is spelled the same here as
-      // in a stage 2 extract. The rest of this object is still the raw vendor
-      // dump, which stage 2's two-count format is not; only the split is
-      // common. Anthropic reports it as thinking tokens, and its own nested
-      // spelling stays in the dump beside the normalised one.
+      // The seam's normalised reason rather than the vendor's own word for it,
+      // so this field means the same thing whichever vendor served the chapter.
+      stopReason: response.stopReason,
+      // Snake_case because that is what these keys have always been called on
+      // disk and what compare-extractions reads to price a run — but the counts
+      // are now the seam's normalised ones, so the vendor's extra fields
+      // (cache reads, service tier) no longer appear. They were never read.
+      // The reasoning split decomposes the output count rather than adding to
+      // it, so the billed totals are untouched by its presence.
       usage: {
-        ...response.usage,
-        ...(reasoningTokens === undefined ? {} : { reasoning_tokens: reasoningTokens }),
+        input_tokens: response.usage.inputTokens,
+        output_tokens: response.usage.outputTokens,
+        ...(response.usage.reasoningTokens === undefined
+          ? {}
+          : { reasoning_tokens: response.usage.reasoningTokens }),
       },
       timestamp: new Date().toISOString(),
     },
@@ -726,7 +702,10 @@ export interface ChapterRunInput {
   plans: ChapterPlan[];
   chunksDir: string;
   book: ParsedBook;
-  model: string;
+  // Resolved rather than a bare ID: the walk needs the registry row's provider
+  // to reach the right vendor, and the row is the authority on that (see
+  // ./models). The ID it carries is also what a chapter extract is stamped with.
+  model: ModelInfo;
   // Mutated in place — the caller owns these, for the reason given where main()
   // declares them.
   roster: RosterEntry[];
@@ -744,10 +723,10 @@ export interface ChapterRunInput {
   // double, otherwise a real one" — one parameter holding both a mode and a
   // dependency, with null and undefined meaning opposite things.
   rebuildMode?: boolean;
-  // Omitted on a live run, which then builds a real SDK client on first use;
-  // supplied by tests. Note which way this defaults: an extraction with no
-  // client is the paying path, not an inert one.
-  client?: BookExtractionClient;
+  // Omitted on a live run, which lets the seam construct a real SDK client for
+  // the model's provider; supplied by tests. Note which way this defaults: an
+  // extraction with no client is the paying path, not an inert one.
+  client?: ExtractionClient;
 }
 
 // Walk every chapter in book order, building the roster and manifest. Narrative
@@ -758,11 +737,11 @@ export async function processChapters(input: ChapterRunInput): Promise<void> {
   const { plans, chunksDir, book, roster, manifestChapters, totals, toExtractCount, model, rebuildMode } =
     input;
   let extractedSoFar = 0;
-  // Built on first extraction rather than up front, so that a caller which
-  // supplies no client — every test — never constructs an SDK client at all.
-  // main() still refuses to start without a credential, so the construction
-  // reached here always succeeds.
-  let client = input.client;
+  // Forwarded to the seam as-is. Undefined means "construct a real client for
+  // this model's provider", which the seam does per call — so a caller that
+  // supplies none, as every test does, never constructs an SDK client at all.
+  // main() still refuses to start without a credential.
+  const client = input.client;
 
   for (const plan of plans) {
     const { chapter } = plan;
@@ -776,7 +755,6 @@ export async function processChapters(input: ChapterRunInput): Promise<void> {
     const outPath = checkpointPath(chunksDir, chapter.index);
 
     if (!rebuildMode && plan.willExtract) {
-      client ??= new Anthropic();
       const ordinal = `[${++extractedSoFar}/${toExtractCount}]`;
       const label = `${ordinal} idx ${chapter.index} · ${chapter.title ?? ""}`;
       // Print the prefix without a newline so the in-flight chapter is visible
@@ -785,7 +763,7 @@ export async function processChapters(input: ChapterRunInput): Promise<void> {
       process.stdout.write(`${label} — extracting (${chapter.wordCount} words, roster ${roster.length})… `);
       const startedAt = performance.now();
       let extraction: Extraction;
-      let usage: Anthropic.Usage;
+      let usage: ExtractionUsage;
       try {
         ({ extraction, usage } = await extractChapter(client, book, chapter, roster, outPath, model));
       } catch (err) {
@@ -795,16 +773,16 @@ export async function processChapters(input: ChapterRunInput): Promise<void> {
         throw err;
       }
       updateRoster(roster, extraction.characters, chapter.index);
-      totals.inputTokens += usage.input_tokens;
-      totals.outputTokens += usage.output_tokens;
+      totals.inputTokens += usage.inputTokens;
+      totals.outputTokens += usage.outputTokens;
       totals.apiCalls += 1;
       manifestChapters.push({ ...base, status: "extracted", file: path.basename(outPath) });
       // The reasoning split is shown only when the vendor reported one, so a
       // blank stays honest about a model that said nothing.
-      const reasoning = anthropicReasoningTokens(usage);
-      const reasoningNote = reasoning === undefined ? "" : ` (${reasoning} reasoning)`;
+      const reasoningNote =
+        usage.reasoningTokens === undefined ? "" : ` (${usage.reasoningTokens} reasoning)`;
       console.log(
-        `done · ${extraction.characters.length} chars, ${extraction.relationships.length} rels, ${extraction.events.length} events · ${usage.input_tokens}/${usage.output_tokens}${reasoningNote} tok · ${formatDuration(performance.now() - startedAt)}`
+        `done · ${extraction.characters.length} chars, ${extraction.relationships.length} rels, ${extraction.events.length} events · ${usage.inputTokens}/${usage.outputTokens}${reasoningNote} tok · ${formatDuration(performance.now() - startedAt)}`
       );
     } else if (fs.existsSync(outPath)) {
       updateRoster(roster, readCheckpointCharacters(outPath), chapter.index);
@@ -855,7 +833,6 @@ async function main() {
   const pendingCount = plans.filter((p) => p.narrative && !p.willExtract && !p.hasCheckpoint).length;
   const skippedCount = plans.filter((p) => !p.narrative).length;
   const model = resolveModel(opts.model);
-  assertProviderSupported(model);
   const estCost = estimateCostUsd(plans, model);
 
   console.log(`Book: ${book.title ?? "(unknown)"} — ${book.chapterCount} flow items, ${book.wordCount} words`);
@@ -892,7 +869,7 @@ async function main() {
       plans,
       chunksDir,
       book,
-      model: opts.model,
+      model,
       roster,
       manifestChapters,
       totals,
@@ -915,8 +892,13 @@ async function main() {
     console.log("Nothing to extract or load. Check --from/--to/--skip.");
     return;
   }
-  if (toExtract.length > 0 && !process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not set. Add it to .env before running extraction.");
+  // Provider-derived, so an OpenAI run never demands an Anthropic key or the
+  // reverse, and the message names the one variable that is actually missing.
+  if (toExtract.length > 0) {
+    const envVar = apiKeyEnvVar(model.provider);
+    if (!process.env[envVar]) {
+      throw new Error(`${envVar} is not set. Add it to .env before running extraction.`);
+    }
   }
   if (toExtract.length > 0 && !opts.yes) {
     if (!(await confirm(`Proceed with ${toExtract.length} API calls (~$${estCost.toFixed(2)})? [y/N] `))) {
@@ -943,7 +925,7 @@ async function main() {
       plans,
       chunksDir,
       book,
-      model: opts.model,
+      model,
       roster,
       manifestChapters,
       totals,
@@ -978,8 +960,12 @@ async function main() {
 // are also imported by the test suite, which must not trigger a real run.
 if (require.main === module) {
   main().catch((err) => {
-    if (err instanceof Anthropic.APIError) {
-      console.error(`API error ${err.status}: ${err.message}`);
+    // Asked of the seam rather than tested against an SDK error class, so this
+    // handler does not have to import either vendor to tell an API failure from
+    // a bug — and names which vendor failed now that there are two.
+    const apiMessage = apiErrorMessage(err);
+    if (apiMessage !== null) {
+      console.error(apiMessage);
     } else {
       console.error(`Extraction failed: ${err instanceof Error ? err.message : err}`);
     }

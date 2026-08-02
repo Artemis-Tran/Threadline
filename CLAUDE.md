@@ -18,8 +18,8 @@ The pipeline — what `npm run book` chains, and what it announces as `[1/3]`,
 
 1. ✅ **Parse** — EPUB → clean chapter text (`src/parse-epub.ts`)
 2. ✅ **Extract** — per-chapter extraction with a running roster
-   (`src/extract-book.ts`) → `output/{slug}-chunks/`. Anthropic-only; a
-   non-Anthropic model is rejected before any API call
+   (`src/extract-book.ts`) → `output/{slug}-chunks/`. Runs on either provider,
+   through the call seam in `src/extraction-call.ts`
 3. ✅ **Merge** — dedupe across chapter extracts (`src/merge-thread.ts`) →
    `output/{slug}-thread.json`
 
@@ -85,20 +85,20 @@ which vendor serves a row. An unpriced or misspelled model is rejected before
 any API call, and reusing one model's cached extracts under a different
 `--model` fails closed.
 
-`luna`/`terra` are OpenAI GPT-5.6 rows and **currently cannot be run at all**:
-`extract-book` still has its own Anthropic call path and rejects a
-non-Anthropic model up front, and the probe forwards to it. The rows stay in
-the registry because putting `extract-book` behind `src/extraction-call.ts` is
-pending work (ADR-0008), and that seam is where their OpenAI path lives.
-Neither is a default; Sonnet still is (ADR-0004), and Luna's extraction quality
-is unmeasured.
+`luna`/`terra` are OpenAI GPT-5.6 rows and are runnable: `extract-book` goes
+through `src/extraction-call.ts`, which owns both vendors' request shapes, so
+the probe and a book run both reach OpenAI. Neither is a default; Sonnet still
+is (ADR-0004), and Luna's extraction quality beyond a single probed chapter is
+unmeasured. Reasoning effort is pinned in the seam rather than exposed as a
+flag, so the registry's output estimate is always sized against a known effort
+level (ADR-0008).
 
 ## Tech stack
 
 - Node.js + TypeScript, `tsx` to run, `epub2` for EPUB parsing
 - `@anthropic-ai/sdk` and `openai` for extraction, behind the call seam in
-  `src/extraction-call.ts` — which `extract-book` does not yet use, since it
-  still builds its own Anthropic client (ADR-0008); `dotenv` for the API keys
+  `src/extraction-call.ts` — the only place either SDK is constructed, and the
+  only extraction path there is (ADR-0008); `dotenv` for the API keys
 - Web (`web/` only): Vite + React + react-router-dom (HashRouter), IndexedDB
   via `idb`, plain CSS modules. No Tailwind, no server, no SQLite/ORM.
 

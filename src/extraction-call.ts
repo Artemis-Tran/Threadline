@@ -2,11 +2,9 @@
 // system prompt, chapter text, a JSON schema, and an output budget, and get back
 // a normalised ExtractionResult, without knowing which vendor served it.
 //
-// Nothing calls through here yet. extract-book still has its own Anthropic call
-// path (ADR-0008), and the single-chapter probe — which used to be this seam's
-// one caller — now forwards to extract-book rather than extracting itself. The
-// seam and its tests stay because putting extract-book behind it is the pending
-// work this was built for, and it is the only OpenAI path there is.
+// extract-book calls through here, and it is the only extraction path there is
+// — the single-chapter probe forwards to it. So every extraction the pipeline
+// performs, on either vendor, is made by this file (ADR-0008).
 //
 // The seam reports what happened; it does not decide how to report it. Refusals,
 // truncation, and unparseable output are all ordinary results here — the calling
@@ -156,9 +154,9 @@ export function apiErrorMessage(err: unknown): string | null {
 // OpenAI as reasoning tokens — which is exactly the kind of thing this seam
 // exists to flatten, rather than an OpenAI concern leaking across it.
 //
-// Exported because extract-book still builds its own Anthropic request
-// (ADR-0008) and would otherwise have to know the vendor's field name itself.
-// It goes when extract-book moves behind the seam.
+// Exported for its own tests rather than for a caller: no longer that extract-book
+// builds its own request, since it does not. Both vendors' spellings are checked
+// directly here so the normalisation stays pinned on either side.
 export function anthropicReasoningTokens(usage: AnthropicUsage): number | undefined {
   return asTokenCount(usage.output_tokens_details?.thinking_tokens);
 }

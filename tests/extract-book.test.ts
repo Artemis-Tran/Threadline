@@ -3,10 +3,8 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import Anthropic from "@anthropic-ai/sdk";
 import {
   extractChapter,
-  BookExtractionClient,
   parseArgs,
   planChapters,
   planStatus,
@@ -21,11 +19,11 @@ import {
   updateRoster,
   readRosterFile,
   buildSystemPrompt,
-  assertProviderSupported,
   CliOptions,
   ChapterRunInput,
   processChapters,
 } from "../src/extract-book";
+import { ExtractionClient } from "../src/extraction-call";
 import { ParsedBook, ParsedChapter, RosterEntry, ExtractedCharacter, Extraction } from "../src/types";
 import { resolveModel } from "../src/models";
 
@@ -86,27 +84,27 @@ function withRosterFile(contents: string, fn: (rosterPath: string) => void): voi
   }
 }
 
-// --- Anthropic response doubles ------------------------------------------
+// --- vendor response doubles ---------------------------------------------
 //
-// Stage 3 builds its own Anthropic request rather than going through the
-// extraction seam (ADR-0008), so its tests inject a client. Nothing below
+// The extract step goes through the extraction seam, which constructs a real
+// SDK client when handed none — so every test here injects one. Nothing below
 // reaches a live API or spends anything.
+//
+// The doubles are shaped to the seam's client interfaces rather than to the
+// SDKs', which is why no vendor SDK is imported: the seam declares only the
+// slice of a response it reads, so a canned payload does not have to satisfy
+// every field a real one carries.
 
-// The vendor's real usage shape, not a two-count stand-in: the reasoning split
-// arrives nested inside this object.
-function anthropicUsage(overrides: Partial<Anthropic.Usage> = {}): Anthropic.Usage {
-  return {
-    input_tokens: 1200,
-    output_tokens: 340,
-    cache_creation: null,
-    cache_creation_input_tokens: null,
-    cache_read_input_tokens: null,
-    inference_geo: null,
-    output_tokens_details: null,
-    server_tool_use: null,
-    service_tier: null,
-    ...overrides,
-  };
+// Just enough of an Anthropic usage payload for the seam. The reasoning split
+// arrives nested inside it, which is the shape being normalised.
+type AnthropicUsagePayload = {
+  input_tokens: number;
+  output_tokens: number;
+  output_tokens_details?: { thinking_tokens?: number } | null;
+};
+
+function anthropicUsage(overrides: Partial<AnthropicUsagePayload> = {}): AnthropicUsagePayload {
+  return { input_tokens: 1200, output_tokens: 340, ...overrides };
 }
 
 function extractionOf(...names: string[]): Extraction {
@@ -118,7 +116,7 @@ function extractionOf(...names: string[]): Extraction {
 interface CannedResponse {
   stop_reason?: string | null;
   text?: string | null;
-  usage?: Anthropic.Usage;
+  usage?: AnthropicUsagePayload;
 }
 
 // What Anthropic answers a `claude-sonnet-5` request with: an alias resolved to
@@ -127,12 +125,24 @@ interface CannedResponse {
 // the requested ID is what gets stamped.
 const SERVED_SNAPSHOT = "claude-sonnet-5-20260101";
 
+// The same trick on the OpenAI side, where an alias resolves to a dated
+// snapshot just as readily.
+const OPENAI_SERVED_SNAPSHOT = "gpt-5.6-luna-2026-04-02";
+
+const LUNA_MODEL = resolveModel("gpt-5.6-luna");
+
+// The captured request, narrowed to what a test asserts on. Both vendors' bodies
+// are read through their own alias so the parameter names stay visible — the
+// prompt travels as `system` for one and `instructions` for the other.
+type CapturedAnthropicRequest = { model: string; max_tokens: number; system?: unknown };
+type CapturedOpenAIRequest = { model: string; max_output_tokens: number; instructions?: unknown };
+
 function cannedResponse(canned: CannedResponse) {
   const text = canned.text === undefined ? JSON.stringify(extractionOf("Henry")) : canned.text;
   return {
     model: SERVED_SNAPSHOT,
     stop_reason: canned.stop_reason === undefined ? "end_turn" : canned.stop_reason,
-    content: text === null ? [] : [{ type: "text" as const, text, citations: null }],
+    content: text === null ? [] : [{ type: "text" as const, text }],
     usage: canned.usage ?? anthropicUsage(),
   };
 }
@@ -141,19 +151,72 @@ function cannedResponse(canned: CannedResponse) {
 // a test can assert on the prompt the *second* chapter was sent — the only
 // externally visible evidence that the first chapter's roster carried forward.
 function scriptedClient(script: CannedResponse[]): {
-  client: BookExtractionClient;
-  requests: Anthropic.MessageCreateParamsNonStreaming[];
+  client: ExtractionClient;
+  requests: CapturedAnthropicRequest[];
 } {
-  const requests: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const requests: CapturedAnthropicRequest[] = [];
   return {
     requests,
     client: {
       messages: {
         async create(body) {
           const canned = script[requests.length];
-          requests.push(body);
+          requests.push(body as unknown as CapturedAnthropicRequest);
           if (canned === undefined) throw new Error(`unscripted API call #${requests.length}`);
           return cannedResponse(canned);
+        },
+      },
+    },
+  };
+}
+
+// OpenAI reports failure differently from Anthropic — a refusal is a content
+// part, truncation is a status plus a separate reason — so a canned answer here
+// is described in those terms rather than by a stop reason.
+interface CannedOpenAIResponse {
+  status?: string;
+  incompleteReason?: string;
+  text?: string | null;
+  refusal?: string;
+  reasoningTokens?: number;
+}
+
+function cannedOpenAIResponse(canned: CannedOpenAIResponse) {
+  const text = canned.text === undefined ? JSON.stringify(extractionOf("Henry")) : canned.text;
+  const parts = [
+    ...(text === null ? [] : [{ type: "output_text" as const, text }]),
+    ...(canned.refusal === undefined ? [] : [{ type: "refusal" as const, refusal: canned.refusal }]),
+  ];
+  return {
+    model: OPENAI_SERVED_SNAPSHOT,
+    status: canned.status ?? "completed",
+    incomplete_details: canned.incompleteReason === undefined ? null : { reason: canned.incompleteReason },
+    // A reasoning item precedes the message in a real response; including one
+    // keeps the double honest about the scan the seam has to do.
+    output: [{ type: "reasoning" as const }, { type: "message" as const, content: parts }],
+    usage: {
+      input_tokens: 1200,
+      output_tokens: 340,
+      output_tokens_details:
+        canned.reasoningTokens === undefined ? null : { reasoning_tokens: canned.reasoningTokens },
+    },
+  };
+}
+
+function scriptedOpenAIClient(script: CannedOpenAIResponse[]): {
+  client: ExtractionClient;
+  requests: CapturedOpenAIRequest[];
+} {
+  const requests: CapturedOpenAIRequest[] = [];
+  return {
+    requests,
+    client: {
+      responses: {
+        async create(body) {
+          const canned = script[requests.length];
+          requests.push(body as unknown as CapturedOpenAIRequest);
+          if (canned === undefined) throw new Error(`unscripted API call #${requests.length}`);
+          return cannedOpenAIResponse(canned);
         },
       },
     },
@@ -345,31 +408,6 @@ describe("costUsd / estimateCostUsd", () => {
     const luna = resolveModel("luna");
     const expected = (3900 * 0.2 + luna.outputTokenEstimate * 1.2) / 1e6;
     assert.ok(Math.abs(estimateCostUsd(plans, luna) - expected) < 1e-9);
-  });
-});
-
-// --- provider guard --------------------------------------------------------
-
-describe("assertProviderSupported", () => {
-  test("accepts an Anthropic model", () => {
-    assert.doesNotThrow(() => assertProviderSupported(SONNET_MODEL));
-  });
-
-  test("rejects a non-Anthropic model before the run reaches an API call", () => {
-    // The registry knows these rows, but extraction still builds Anthropic
-    // requests — so a run on one would be a foreign model ID inside an
-    // Anthropic call.
-    assert.throws(() => assertProviderSupported(resolveModel("luna")), /openai/);
-    assert.throws(() => assertProviderSupported(resolveModel("terra")), /only supports Anthropic/);
-    // The single-chapter probe forwards here, so it is not an escape hatch and
-    // the message must not offer it as one.
-    let message = "";
-    try {
-      assertProviderSupported(resolveModel("luna"));
-    } catch (err) {
-      message = (err as Error).message;
-    }
-    assert.doesNotMatch(message, /extract-chapter/);
   });
 });
 
@@ -754,7 +792,7 @@ describe("extract-book buildSystemPrompt", () => {
 // client is injected, so nothing here reaches a live API or spends anything.
 
 describe("extractChapter", () => {
-  function fakeClient(responseUsage: Anthropic.Usage): BookExtractionClient {
+  function fakeClient(responseUsage: AnthropicUsagePayload): ExtractionClient {
     return scriptedClient([{ usage: responseUsage }]).client;
   }
 
@@ -763,7 +801,7 @@ describe("extractChapter", () => {
   type WrittenUsage = { input_tokens?: unknown; output_tokens?: unknown; reasoning_tokens?: unknown };
   type WrittenMeta = { model?: unknown; modelReturned?: unknown; usage: WrittenUsage };
 
-  async function writtenMeta(responseUsage: Anthropic.Usage): Promise<WrittenMeta> {
+  async function writtenMeta(responseUsage: AnthropicUsagePayload): Promise<WrittenMeta> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-extract-"));
     try {
       const outPath = path.join(dir, "idx004-extract.json");
@@ -773,7 +811,7 @@ describe("extractChapter", () => {
         chapter(4, "One", 900),
         [],
         outPath,
-        "claude-sonnet-5"
+        SONNET_MODEL
       );
       return (JSON.parse(fs.readFileSync(outPath, "utf-8")) as { meta: WrittenMeta }).meta;
     } finally {
@@ -781,7 +819,7 @@ describe("extractChapter", () => {
     }
   }
 
-  async function writtenUsage(responseUsage: Anthropic.Usage): Promise<WrittenUsage> {
+  async function writtenUsage(responseUsage: AnthropicUsagePayload): Promise<WrittenUsage> {
     return (await writtenMeta(responseUsage)).usage;
   }
 
@@ -839,7 +877,7 @@ describe("processChapters", () => {
 
   function runInput(over: Partial<ChapterRunInput> & Pick<ChapterRunInput, "plans" | "chunksDir" | "book">): ChapterRunInput {
     return {
-      model: "claude-sonnet-5",
+      model: SONNET_MODEL,
       roster: [],
       manifestChapters: [],
       totals: { inputTokens: 0, outputTokens: 0, apiCalls: 0 },
@@ -858,7 +896,7 @@ describe("processChapters", () => {
     const failures: Array<[string, CannedResponse, RegExp]> = [
       ["a refusal", { stop_reason: "refusal", text: null }, /refused/],
       ["truncation", { stop_reason: "max_tokens", text: '{"characters":[{"na' }, /truncated at \d+ tokens/],
-      ["no text block", { stop_reason: "tool_use", text: null }, /no text block/],
+      ["no usable text", { stop_reason: "tool_use", text: null }, /no usable text/],
     ];
 
     for (const [name, canned, message] of failures) {
@@ -943,7 +981,9 @@ describe("processChapters", () => {
       const written = JSON.parse(fs.readFileSync(checkpointPath(dir, 4), "utf-8"));
       assert.deepEqual(written.extraction, extractionOf("Henry Ashford"));
       assert.equal(written.meta.chapterIndex, 4);
-      assert.equal(written.meta.stopReason, "end_turn");
+      // The seam's normalised reason, not the vendor's own word for it, so the
+      // field means the same thing in an OpenAI extract as in this one.
+      assert.equal(written.meta.stopReason, "ok");
       // Only the extracted chapter costs anything, and only it is billed.
       assert.equal(requests.length, 1);
       assert.deepEqual(input.totals, { inputTokens: 1200, outputTokens: 340, apiCalls: 1 });
@@ -998,6 +1038,119 @@ describe("processChapters", () => {
 
         assert.equal(requests.length, 0);
         assert.equal(input.manifestChapters[0].status, "from-cache");
+      });
+    });
+  });
+
+  // --- the second provider -------------------------------------------------
+  //
+  // The walk hands the seam a resolved model and never learns which vendor
+  // answered, so these ride an OpenAI-shaped double through exactly the code an
+  // Anthropic run takes. What is being checked is that the provider on the
+  // registry row picks the branch, and that everything downstream of the call —
+  // the stamp, the roster fold, the manifest row — is indifferent to it.
+
+  describe("an OpenAI model", () => {
+    test("reaches the OpenAI branch, and no Anthropic client is constructed", async () => {
+      await withChunksDir(async (dir) => {
+        const b = book([chapter(4, "One", 900)]);
+        const plans = planChapters(b, defaultOpts(), dir);
+        const { client, requests } = scriptedOpenAIClient([
+          { text: JSON.stringify(extractionOf("Henry Ashford")) },
+        ]);
+
+        await quiet(() =>
+          processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
+        );
+
+        // An Anthropic double would have been asked through `messages.create`;
+        // this one was asked through `responses.create`, which is the whole
+        // claim — the registry row's provider chose the branch.
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].model, "gpt-5.6-luna");
+        // The roster-bearing prompt travels under OpenAI's parameter name.
+        assert.match(String(requests[0].instructions), /extracting structured story data/);
+      });
+    });
+
+    test("stamps the requested registry ID over the dated snapshot OpenAI serves", async () => {
+      await withChunksDir(async (dir) => {
+        const b = book([chapter(4, "One", 900)]);
+        const plans = planChapters(b, defaultOpts(), dir);
+        const { client } = scriptedOpenAIClient([{ text: JSON.stringify(extractionOf("Henry Ashford")) }]);
+
+        await quiet(() =>
+          processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
+        );
+
+        const meta = JSON.parse(fs.readFileSync(checkpointPath(dir, 4), "utf-8")).meta;
+        // The reuse guard and the pricing table both look this up, and OpenAI's
+        // served string is not a registry ID (ADR-0008).
+        assert.equal(meta.model, "gpt-5.6-luna");
+        assert.equal(meta.modelReturned, OPENAI_SERVED_SNAPSHOT);
+      });
+    });
+
+    test("records the reasoning split the same way an Anthropic run does", async () => {
+      await withChunksDir(async (dir) => {
+        const b = book([chapter(4, "One", 900)]);
+        const plans = planChapters(b, defaultOpts(), dir);
+        const { client } = scriptedOpenAIClient([
+          { text: JSON.stringify(extractionOf("Henry Ashford")), reasoningTokens: 704 },
+        ]);
+        const input = runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL });
+
+        await quiet(() => processChapters(input));
+
+        const usage = JSON.parse(fs.readFileSync(checkpointPath(dir, 4), "utf-8")).meta.usage;
+        // Same key an Anthropic extract carries — one concept under two vendor
+        // names is what the seam exists to flatten. It decomposes the output
+        // count rather than adding to it, so the billed totals are unmoved.
+        assert.equal(usage.reasoning_tokens, 704);
+        assert.equal(usage.output_tokens, 340);
+        assert.deepEqual(input.totals, { inputTokens: 1200, outputTokens: 340, apiCalls: 1 });
+      });
+    });
+
+    // A filtered response is not a truncated one: retrying it with a bigger
+    // budget spends money on the same refusal, and dumping it as a partial
+    // answer puts a non-extraction into the run.
+    test("aborts on a content-filtered response as a refusal, not a truncation", async () => {
+      await withChunksDir(async (dir) => {
+        const b = book([chapter(4, "One", 900)]);
+        const plans = planChapters(b, defaultOpts(), dir);
+        const { client } = scriptedOpenAIClient([
+          { status: "incomplete", incompleteReason: "content_filter", text: null },
+        ]);
+
+        await assert.rejects(
+          () =>
+            quiet(() =>
+              processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
+            ),
+          /refused/
+        );
+        assert.equal(fs.existsSync(checkpointPath(dir, 4)), false);
+        assert.equal(fs.existsSync(checkpointPath(dir, 4).replace(/\.json$/, "-truncated.txt")), false);
+      });
+    });
+
+    test("preserves truncated output before aborting, exactly as an Anthropic run does", async () => {
+      await withChunksDir(async (dir) => {
+        const b = book([chapter(4, "One", 900)]);
+        const plans = planChapters(b, defaultOpts(), dir);
+        const { client } = scriptedOpenAIClient([
+          { status: "incomplete", incompleteReason: "max_output_tokens", text: '{"characters":[{"na' },
+        ]);
+
+        await assert.rejects(() =>
+          quiet(() =>
+            processChapters(runInput({ plans, chunksDir: dir, book: b, client, model: LUNA_MODEL }))
+          )
+        );
+
+        const truncated = checkpointPath(dir, 4).replace(/\.json$/, "-truncated.txt");
+        assert.equal(fs.readFileSync(truncated, "utf-8"), '{"characters":[{"na');
       });
     });
   });
