@@ -174,6 +174,13 @@ async function main() {
 
   const slug = deriveSlug(parsedJsonPath);
   const outputDir = path.resolve(__dirname, "..", "output");
+  // The model is part of the filename because comparing two models on one
+  // chapter is what this stage is *for* — without it a second run silently
+  // overwrites the first, which is the one output you wanted to keep. Stage 3
+  // separates runs by directory instead (--out-dir), since there a whole book's
+  // extracts move together. The resolved registry ID is used verbatim, so the
+  // name matches the `model` recorded in the checkpoint's meta.
+  const stem = `${slug}-idx${chapterIndex}-${model}`;
 
   if (result.stopReason === "refusal") {
     console.error("The model refused this request (stopReason: refusal). No output written.");
@@ -197,7 +204,7 @@ async function main() {
   try {
     extraction = JSON.parse(result.text);
   } catch {
-    const rawPath = path.join(outputDir, `${slug}-idx${chapterIndex}-extract-raw.txt`);
+    const rawPath = path.join(outputDir, `${stem}-extract-raw.txt`);
     fs.writeFileSync(rawPath, result.text, "utf-8");
     console.error(`Response was not valid JSON despite structured outputs. Raw text dumped to: ${rawPath}`);
     process.exitCode = 1;
@@ -229,7 +236,7 @@ async function main() {
     extraction,
   };
 
-  const outputPath = path.join(outputDir, `${slug}-idx${chapterIndex}-extract.json`);
+  const outputPath = path.join(outputDir, `${stem}-extract.json`);
   fs.writeFileSync(outputPath, JSON.stringify(checkpoint, null, 2), "utf-8");
 
   const e = extraction as { characters: unknown[]; relationships: unknown[]; events: unknown[] };
