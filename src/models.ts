@@ -55,6 +55,12 @@ interface ModelRow {
 //
 // This is why 1290 must not be re-derived from a low-effort run alone: the
 // margin over what low actually spends is deliberate headroom, not slack.
+//
+// It is a ceiling across *effort*, not across chapter length — one 1358-word
+// chapter measured, against a ~1937-word book average — so a long chapter can
+// out-spend it. A whole-run quote absorbs that across chapters; a one-chapter
+// probe of a long chapter is where it shows. More chapters is the only fix
+// (ADR-0008).
 const REGISTRY: Record<string, ModelRow> = {
   "claude-sonnet-5": {
     provider: "anthropic",

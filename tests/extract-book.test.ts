@@ -406,10 +406,10 @@ describe("costUsd / estimateCostUsd", () => {
     // Each row's estimate is charged rather than a single global figure. The
     // input side is the same 3900 tokens Sonnet is charged for above — the
     // per-word constant is deliberately shared, and over-estimates OpenAI.
-    const luna = resolveModel("luna");
+    // 1290 is the registry's figure, pinned in models.test.ts; spelled out here
+    // so this test fails on the arithmetic rather than tracking the row.
     const expected = (3900 * 0.2 + 1290 * 1.2) / 1e6;
-    assert.equal(luna.outputTokenEstimate, 1290);
-    assert.ok(Math.abs(estimateCostUsd(plans, luna) - expected) < 1e-9);
+    assert.ok(Math.abs(estimateCostUsd(plans, resolveModel("luna")) - expected) < 1e-9);
   });
 });
 

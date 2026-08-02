@@ -152,8 +152,9 @@ chapter. It has been, and it was wrong by more than an order of magnitude in the
 expensive direction: the probed chapter spent 1290 output tokens at medium and
 1054 at low, so the gate quoted $0.015373 against $0.002039 actually spent — 7.5×
 over. Extrapolated across the reference book (48 narrative chapters, 92,955
-words) that was roughly $0.75 quoted against about $0.10, and around 92% of the
-gap was the output estimate alone.
+words) that was roughly $0.75 quoted against about $0.10, with the output
+estimate alone accounting for over 90% of the gap. The same book now quotes
+about $0.14.
 
 The OpenAI rows now carry 1290: the higher of the probe's two runs, not the mean
 of them and not the low-effort figure the seam actually pins. A row's estimate is
@@ -162,10 +163,30 @@ spends. A gate that over-quotes makes a run look worse than it is; a gate that
 under-quotes stops being a gate. The vendor's reported output count already
 includes reasoning tokens, so no separate accounting is needed.
 
+Read the ceiling for what it is: 1290 is the higher of two *efforts* on one
+chapter, not a ceiling across chapter lengths. That chapter was 1358 words
+against the reference book's ~1937-word average, and output scales with input,
+so a long chapter can spend more than 1290 and be under-quoted. The gate is a
+whole-run total, and over 48 chapters the short ones subsidise the long ones, so
+this bites a single-chapter probe of a long chapter rather than a book run. It is
+a known limit of a one-chapter measurement, not an oversight — narrowing it means
+measuring more chapters, which is what the next OpenAI run should be spent on.
+
 The per-word input constant is deliberately left alone at 2.7. It tracks the
-Anthropic baseline closely and over-estimates OpenAI, which is the safe
-direction, and the input side is only about 8% of an OpenAI run's quote — there
-is no gate error worth spending a second constant on.
+Anthropic baseline closely (measured 2.65) and over-estimates OpenAI, which is
+the safe direction: the probed chapter was 1358 words and 2455 input tokens,
+1.81 per word.
+
+Correcting the estimate changed what that decision costs, and the arithmetic is
+worth stating because it inverts. Against the old 12000 the input side was ~6%
+of an OpenAI quote and could be waved away. Against 1290 it is ~39% of a chapter
+quote and ~45% of a reference-book quote — the input side is now nearly half of
+what the gate charges an OpenAI run. Carrying 2.7 rather than 1.81 therefore
+inflates an OpenAI quote by roughly 10–15% overall. That is still the safe
+direction and still small next to the 7.5× it replaces, and one constant shared
+by both vendors is worth more than a per-provider pair that has to be
+re-measured whenever either vendor retokenises. But "negligible" is no longer
+the reason; "modest, and biased the safe way" is.
 
 The per-chapter token ceiling is 16000, unchanged. Reasoning and the answer draw
 on it together, so truncation was a live risk at medium; at low, with the probe
