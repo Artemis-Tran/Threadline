@@ -41,13 +41,20 @@ interface ModelRow {
 // row as the fallback if Luna proves too noisy, not as a saving.
 //
 // The Anthropic rows carry 2000 output tokens because that is the figure the
-// stage-3 gate hardcoded before this field existed. The OpenAI rows carry a
-// deliberately conservative 12000: GPT-5.6 is a reasoning family whose reasoning
-// tokens bill as output, and the seam pins those rows to medium effort, so the
-// reasoning spend is expected to dwarf the answer itself.
-// UNMEASURED — a single live chapter yields the number that corrects it, and the
-// vendor's reported output count already includes reasoning tokens, so the total
-// is enough to calibrate against without counting them separately.
+// stage-3 gate hardcoded before this field existed.
+//
+// The OpenAI rows carry 1290, measured. They previously carried a guessed 12000
+// on the reasoning that GPT-5.6 is a reasoning family whose reasoning tokens
+// bill as output, so the reasoning spend would dwarf the answer; a live chapter
+// says otherwise, and 12000 over-quoted that chapter 7.5× ($0.015373 against
+// $0.002039 actual). The probe ran the same chapter at both efforts and 1290 is
+// the higher of the two runs — medium's, against low's 1054 — because the row is
+// a ceiling and not a mean, even though the seam now pins low. The vendor's
+// reported output count already includes reasoning tokens, so that total is the
+// whole of what the gate has to cover.
+//
+// This is why 1290 must not be re-derived from a low-effort run alone: the
+// margin over what low actually spends is deliberate headroom, not slack.
 const REGISTRY: Record<string, ModelRow> = {
   "claude-sonnet-5": {
     provider: "anthropic",
@@ -67,12 +74,12 @@ const REGISTRY: Record<string, ModelRow> = {
   "gpt-5.6-luna": {
     provider: "openai",
     rates: { inputUsdPerMTok: 0.2, outputUsdPerMTok: 1.2 },
-    outputTokenEstimate: 12000,
+    outputTokenEstimate: 1290,
   },
   "gpt-5.6-terra": {
     provider: "openai",
     rates: { inputUsdPerMTok: 2, outputUsdPerMTok: 12 },
-    outputTokenEstimate: 12000,
+    outputTokenEstimate: 1290,
   },
 };
 

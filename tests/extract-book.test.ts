@@ -403,10 +403,12 @@ describe("costUsd / estimateCostUsd", () => {
       defaultOpts(),
       "/nonexistent-chunks-dir"
     );
-    // A reasoning model spends more output per chapter, so the gate has to
-    // charge its row's estimate rather than a single global figure.
+    // Each row's estimate is charged rather than a single global figure. The
+    // input side is the same 3900 tokens Sonnet is charged for above — the
+    // per-word constant is deliberately shared, and over-estimates OpenAI.
     const luna = resolveModel("luna");
-    const expected = (3900 * 0.2 + luna.outputTokenEstimate * 1.2) / 1e6;
+    const expected = (3900 * 0.2 + 1290 * 1.2) / 1e6;
+    assert.equal(luna.outputTokenEstimate, 1290);
     assert.ok(Math.abs(estimateCostUsd(plans, luna) - expected) < 1e-9);
   });
 });

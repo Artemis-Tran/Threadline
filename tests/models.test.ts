@@ -33,8 +33,16 @@ describe("resolveModel", () => {
     // Pinned for the Anthropic rows because the stage-3 gate used to hardcode
     // 2000 — a no-flag estimate has to come out unchanged.
     assert.equal(resolveModel("sonnet").outputTokenEstimate, 2000);
-    // Higher for the reasoning rows, where reasoning tokens bill as output.
-    assert.ok(resolveModel("luna").outputTokenEstimate > 2000);
+    assert.equal(resolveModel("haiku").outputTokenEstimate, 2000);
+    assert.equal(resolveModel("opus").outputTokenEstimate, 2000);
+  });
+
+  test("prices the OpenAI rows from the probe's higher run", () => {
+    // 1290 output tokens is the medium-effort run of the Luna probe, taken over
+    // low's 1054 to keep the row a ceiling rather than a mean. It replaces an
+    // unmeasured 12000 that over-quoted the probed chapter 7.5×.
+    assert.equal(resolveModel("luna").outputTokenEstimate, 1290);
+    assert.equal(resolveModel("terra").outputTokenEstimate, 1290);
   });
 
   test("rejects unknown models with the accepted list", () => {
