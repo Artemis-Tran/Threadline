@@ -13,6 +13,8 @@ import {
   estimateCostUsd,
   costUsd,
   checkpointPath,
+  chapterIndexLines,
+  assertForceIndicesInRange,
   assertCheckpointModelsMatch,
   indexFromCheckpoint,
   readCheckpointCharacters,
@@ -35,6 +37,7 @@ const SONNET = SONNET_MODEL.rates;
 function defaultOpts(overrides: Partial<CliOptions> = {}): CliOptions {
   return {
     parsedJsonPath: "book-parsed.json",
+    list: false,
     from: null,
     to: null,
     skip: new Set(),
@@ -250,6 +253,53 @@ describe("parseArgs", () => {
   });
 });
 
+// --- the chapter index listing ---------------------------------------------
+
+describe("--list / chapterIndexLines", () => {
+  test("parseArgs treats --list as a flag, defaulting to off", () => {
+    assert.equal(parseArgs(["book.json"]).list, false);
+    assert.equal(parseArgs(["book.json", "--list"]).list, true);
+  });
+
+  test("renders one line per flow item, index first", () => {
+    const lines = chapterIndexLines(book([chapter(0, "Contents", 40), chapter(1, "The Wheel", 3900)]));
+    assert.equal(lines.length, 2);
+    assert.match(lines[0], /^\s+0 \|\s+40 words \| Contents$/);
+    assert.match(lines[1], /^\s+1 \|\s+3900 words \| The Wheel$/);
+  });
+
+  test("falls back to the opening line when a flow item has no title", () => {
+    const untitled = { ...chapter(3, "x", 120), title: null, text: "A cold morning\nand then more" };
+    assert.match(chapterIndexLines(book([untitled]))[0], /A cold morning$/);
+  });
+});
+
+// --- forced index range ------------------------------------------------------
+
+describe("assertForceIndicesInRange", () => {
+  test("accepts every index the book has, and an empty set", () => {
+    assert.doesNotThrow(() => assertForceIndicesInRange(new Set(), 3));
+    assert.doesNotThrow(() => assertForceIndicesInRange(new Set([0, 2]), 3));
+  });
+
+  test("names the bad index and the real range rather than the flags used to select it", () => {
+    // The single-chapter probe forwards --force, so a mistyped chapter index
+    // arrives here — the message has to be about the index, not about
+    // --from/--to/--skip, which that operator never typed.
+    assert.throws(() => assertForceIndicesInRange(new Set([999]), 52), (err: Error) => {
+      assert.match(err.message, /No such chapter: 999/);
+      assert.match(err.message, /\[0, 51\]/);
+      assert.match(err.message, /--list/);
+      assert.doesNotMatch(err.message, /--from/);
+      return true;
+    });
+  });
+
+  test("reports every out-of-range index, in order, keeping the valid ones quiet", () => {
+    assert.throws(() => assertForceIndicesInRange(new Set([7, 12, 3]), 5), /No such chapter: 7, 12\./);
+  });
+});
+
 // --- cost math -------------------------------------------------------------
 
 describe("costUsd / estimateCostUsd", () => {
@@ -300,11 +350,20 @@ describe("assertProviderSupported", () => {
   });
 
   test("rejects a non-Anthropic model before the run reaches an API call", () => {
-    // The registry knows these rows, but stage 3 still builds Anthropic
-    // requests — so a whole-book run on one would be a foreign model ID inside
-    // an Anthropic call.
+    // The registry knows these rows, but extraction still builds Anthropic
+    // requests — so a run on one would be a foreign model ID inside an
+    // Anthropic call.
     assert.throws(() => assertProviderSupported(resolveModel("luna")), /openai/);
-    assert.throws(() => assertProviderSupported(resolveModel("terra")), /extract-chapter/);
+    assert.throws(() => assertProviderSupported(resolveModel("terra")), /only supports Anthropic/);
+    // The single-chapter probe forwards here, so it is not an escape hatch and
+    // the message must not offer it as one.
+    let message = "";
+    try {
+      assertProviderSupported(resolveModel("luna"));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert.doesNotMatch(message, /extract-chapter/);
   });
 });
 

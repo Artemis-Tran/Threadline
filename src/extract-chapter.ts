@@ -1,114 +1,63 @@
-import "dotenv/config";
-import * as fs from "fs";
+import { spawn } from "node:child_process";
 import * as path from "path";
-import { ParsedBook, deriveSlug } from "./types";
+import { deriveSlug } from "./types";
 import { DEFAULT_MODEL, resolveModel } from "./models";
-import { apiErrorMessage, apiKeyEnvVar, callExtraction, ExtractionUsage } from "./extraction-call";
 
-const MAX_TOKENS = 16000;
-
-// role/significance stay free-text in this probe: book-level judgments like
-// protagonist/antagonist can't be made from one chapter, and free-text shows
-// what vocabulary the model naturally uses before we lock enums in stage 3.
-const EXTRACTION_SCHEMA = {
-  type: "object",
-  properties: {
-    characters: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          aliases: { type: "array", items: { type: "string" } },
-          description: { type: "string" },
-          role: { type: "string" },
-        },
-        required: ["name", "aliases", "description", "role"],
-        additionalProperties: false,
-      },
-    },
-    relationships: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          from: { type: "string" },
-          to: { type: "string" },
-          type: { type: "string" },
-          description: { type: "string" },
-        },
-        required: ["from", "to", "type", "description"],
-        additionalProperties: false,
-      },
-    },
-    events: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          summary: { type: "string" },
-          characters_involved: { type: "array", items: { type: "string" } },
-          significance: { type: "string" },
-        },
-        required: ["summary", "characters_involved", "significance"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["characters", "relationships", "events"],
-  additionalProperties: false,
-} as const;
-
-export function buildSystemPrompt(bookTitle: string | null): string {
-  return [
-    `You are extracting structured story data from one chapter of the book "${bookTitle ?? "Unknown"}".`,
-    "Extract the characters that appear in this chapter, the relationships between them, and the plot events that occur.",
-    "Describe only what this chapter itself states or clearly shows. Do not speculate about events outside this chapter, and do not use outside knowledge of the book.",
-    "Use the character's most complete name from the chapter as `name`, and list other forms they are called by in `aliases`.",
-  ].join(" ");
-}
-
-// The extract's own usage format, not a dump of whatever usage object the SDK
-// returned. The snake_case names are deliberate: the comparison tooling already
-// reads them off extracts on disk, so keeping them means no paid output needs
-// migrating.
+// Single-chapter probe: extract one chapter and eyeball the result before
+// paying for a book. It is a translator, not a second extraction path — it maps
+// a chapter index onto a one-chapter extraction window and spawns extract-book,
+// which owns the schema, the prompt, the roster, the cost gate, and the extract
+// writer. Spawning (rather than importing) is the same choice run-book makes,
+// for the same reason: it preserves the spawned command's exact behaviour, most
+// importantly its interactive cost-confirmation prompt.
 //
-// `reasoning_tokens` decomposes `output_tokens` rather than adding to it, so it
-// changes no total and no cost. It is written only when the vendor reported the
-// split — an absent key says "not measured", which a zero would not.
-export function checkpointUsage(
-  usage: ExtractionUsage
-): { input_tokens: number; output_tokens: number; reasoning_tokens?: number } {
-  return {
-    input_tokens: usage.inputTokens,
-    output_tokens: usage.outputTokens,
-    ...(usage.reasoningTokens === undefined ? {} : { reasoning_tokens: usage.reasoningTokens }),
-  };
+// This command used to have its own copies of all of the above. They differed
+// from extract-book's in ways that stopped being intentional once the closed
+// vocabularies for character role and event significance shipped, at which
+// point its output was no longer a chapter extract as the glossary defines one.
+
+const USAGE =
+  "Usage: tsx src/extract-chapter.ts <parsed-json-path> <chapter-index|--list> [--model <id>] [--roster <path>]";
+
+// Where a probe's chapter extract and manifest land. Keyed by extraction model
+// so probing a second model cannot overwrite the first result, and separate
+// from the book's real run directory (output/{slug}-chunks) so a probe can
+// neither pollute a run nor trip its model-reuse guard. ADR-0008 already
+// establishes directories, not filenames, as how runs are kept apart.
+//
+// Resolved against the repo rather than the caller's cwd, exactly as
+// parse-epub's output path is, so `npm run extract` names the same directory
+// from anywhere.
+export function probeDir(parsedJsonPath: string, model: string): string {
+  return path.resolve(__dirname, "..", "output", `${deriveSlug(parsedJsonPath)}-probe-${model}`);
 }
 
-const USAGE = "Usage: tsx src/extract-chapter.ts <parsed-json-path> <chapter-index|--list> [--model <id>]";
-
-export interface ChapterCliArgs {
-  parsedJsonPath: string;
-  chapterArg: string; // a numeric index, or the literal "--list"
-  model: string;
-}
-
-// Pure so the guard is unit-testable: --model is pulled out (anywhere on the
-// line), --list is an allowed positional, any other --flag is rejected, and
-// exactly two positionals are required. Throwing here — instead of silently
-// dropping a misspelled flag — stops a typo'd --model from reaching the paid
-// API call with the default model.
-export function parseChapterArgs(argv: string[]): ChapterCliArgs {
+// Translate this command's arguments into extract-book's. Pure so the forwarded
+// flags are verifiable without spawning anything, and so a typo — a misspelled
+// flag, an unknown model — is rejected here rather than reaching a paid call
+// with the default model.
+//
+// Note what is deliberately absent: --yes. A probe goes through the same cost
+// confirmation a book run does. --force is deliberately present: a probe that
+// silently reported "nothing to extract" on a repeat run would be confusing,
+// and the gate is what stops the repeat from silently re-charging.
+export function probeArgs(argv: string[]): string[] {
   let model = DEFAULT_MODEL;
+  let rosterPath: string | null = null;
   const positionals: string[] = [];
+
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--model") {
       const value = argv[++i];
       if (!value) throw new Error("--model expects a model name");
       model = resolveModel(value).id;
+    } else if (arg === "--roster") {
+      const value = argv[++i];
+      if (!value || value.startsWith("--")) throw new Error("--roster expects a path");
+      rosterPath = value;
     } else if (arg === "--list") {
+      // An allowed positional, not a flag: it stands where a chapter index would.
       positionals.push(arg);
     } else if (arg.startsWith("--")) {
       throw new Error(`Unknown flag: ${arg}`);
@@ -116,171 +65,59 @@ export function parseChapterArgs(argv: string[]): ChapterCliArgs {
       positionals.push(arg);
     }
   }
+
   if (positionals.length !== 2) throw new Error(USAGE);
-  return { parsedJsonPath: positionals[0], chapterArg: positionals[1], model };
+  const [parsedJsonPath, chapterArg] = positionals;
+
+  // The array index is NOT the book's chapter number (front matter and POV
+  // interludes are interleaved), so the listing has to stay reachable — and
+  // free. It makes no API call, so it forwards no probe flags: no model, no
+  // directory to key by it, nothing to charge for.
+  if (chapterArg === "--list") return [parsedJsonPath, "--list"];
+
+  if (!/^\d+$/.test(chapterArg)) {
+    throw new Error(`Chapter index must be a non-negative integer or --list, got: ${chapterArg}`);
+  }
+
+  return [
+    parsedJsonPath,
+    // --from/--to fence the run to this one chapter. Without them, every other
+    // narrative chapter with no cached extract would still be eligible, and a
+    // one-chapter command would quote a whole book. --force then overrides that
+    // window for the probed index alone, so a repeat probe re-extracts (and a
+    // short chapter the narrative heuristics would skip is still probeable).
+    "--from", chapterArg,
+    "--to", chapterArg,
+    "--force", chapterArg,
+    "--model", model,
+    "--out-dir", probeDir(parsedJsonPath, model),
+    ...(rosterPath === null ? [] : ["--roster", rosterPath]),
+  ];
 }
 
-async function main() {
-  let parsedJsonPath: string;
-  let chapterIndexArg: string;
-  let model: string;
+function main(): void {
+  let args: string[];
   try {
-    ({ parsedJsonPath, chapterArg: chapterIndexArg, model } = parseChapterArgs(process.argv.slice(2)));
+    args = probeArgs(process.argv.slice(2));
   } catch (err) {
     console.error((err as Error).message);
     process.exitCode = 1;
     return;
   }
 
-  if (!fs.existsSync(parsedJsonPath)) {
-    console.error(`File not found: ${parsedJsonPath}`);
+  const tsxBin = path.join(__dirname, "..", "node_modules", ".bin", "tsx");
+  const child = spawn(tsxBin, [path.join(__dirname, "extract-book.ts"), ...args], { stdio: "inherit" });
+  child.on("error", (err) => {
+    console.error(`Could not run extract-book.ts: ${err.message}`);
     process.exitCode = 1;
-    return;
-  }
-
-  const book: ParsedBook = JSON.parse(fs.readFileSync(parsedJsonPath, "utf-8"));
-
-  // The array index is NOT the book's chapter number (front matter and POV
-  // interludes are interleaved) — --list shows the mapping without an API call.
-  if (chapterIndexArg === "--list") {
-    for (const c of book.chapters) {
-      const title = c.title ?? c.text.split("\n")[0].slice(0, 80);
-      console.log(`${String(c.index).padStart(3)} | ${String(c.wordCount).padStart(5)} words | ${title}`);
-    }
-    return;
-  }
-
-  // Only the chosen model's vendor needs a credential — an OpenAI run must not
-  // demand an Anthropic key, or the reverse. resolveModel is idempotent on an
-  // already-resolved ID, so re-resolving here just recovers the registry row.
-  const { provider } = resolveModel(model);
-  const apiKeyVar = apiKeyEnvVar(provider);
-  if (!process.env[apiKeyVar]) {
-    console.error(`${apiKeyVar} is not set. Add it to .env before running extraction.`);
-    process.exitCode = 1;
-    return;
-  }
-
-  const chapterIndex = Number(chapterIndexArg);
-  if (!Number.isInteger(chapterIndex) || chapterIndex < 0 || chapterIndex >= book.chapters.length) {
-    console.error(`Chapter index must be an integer in [0, ${book.chapters.length - 1}], got: ${chapterIndexArg}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  const chapter = book.chapters[chapterIndex];
-  const chapterTitle = chapter.title ?? chapter.text.split("\n")[0].slice(0, 80);
-  console.log(`Selected chapters[${chapterIndex}]: "${chapterTitle}" (${chapter.wordCount} words)`);
-  if (chapter.wordCount < 300) {
-    console.warn(
-      `Warning: chapter ${chapterIndex} has only ${chapter.wordCount} words — likely front matter. Consider a narrative chapter instead.`
-    );
-  }
-
-  const systemPrompt = buildSystemPrompt(book.title);
-
-  console.log(`Extracting chapter ${chapterIndex} (${chapter.wordCount} words) with ${model} ...`);
-
-  const result = await callExtraction({
-    model,
-    provider,
-    systemPrompt,
-    chapterText: chapter.text,
-    schema: EXTRACTION_SCHEMA,
-    maxTokens: MAX_TOKENS,
   });
-
-  const slug = deriveSlug(parsedJsonPath);
-  const outputDir = path.resolve(__dirname, "..", "output");
-  // The model is part of the filename because comparing two models on one
-  // chapter is what this stage is *for* — without it a second run silently
-  // overwrites the first, which is the one output you wanted to keep. Stage 3
-  // separates runs by directory instead (--out-dir), since there a whole book's
-  // extracts move together. The resolved registry ID is used verbatim, so the
-  // name matches the `model` recorded in the checkpoint's meta.
-  const stem = `${slug}-idx${chapterIndex}-${model}`;
-
-  if (result.stopReason === "refusal") {
-    console.error("The model refused this request (stopReason: refusal). No output written.");
-    process.exitCode = 1;
-    return;
-  }
-  if (result.stopReason === "max_tokens") {
-    console.error(`Output truncated at ${MAX_TOKENS} tokens (stopReason: max_tokens). No checkpoint written.`);
-    console.error("Raw (truncated) text follows:\n");
-    console.error(result.text || "(no text)");
-    process.exitCode = 1;
-    return;
-  }
-  if (!result.text) {
-    console.error(`No text in response (stopReason: ${result.stopReason}). No output written.`);
-    process.exitCode = 1;
-    return;
-  }
-
-  let extraction: unknown;
-  try {
-    extraction = JSON.parse(result.text);
-  } catch {
-    const rawPath = path.join(outputDir, `${stem}-extract-raw.txt`);
-    fs.writeFileSync(rawPath, result.text, "utf-8");
-    console.error(`Response was not valid JSON despite structured outputs. Raw text dumped to: ${rawPath}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  const checkpoint = {
-    meta: {
-      // The registry ID that was *requested*, not the string the vendor
-      // returned. The requested ID is the one the registry can price, and it
-      // survives a vendor resolving an alias to a dated snapshot — a served
-      // string would not, which is what would make a run un-resumable once
-      // extracts are matched against the model that asked for them. The served
-      // string is kept alongside so a re-pointed alias stays visible.
-      model,
-      modelReturned: result.modelReturned,
-      chapterIndex,
-      chapterTitle,
-      chapterWordCount: chapter.wordCount,
-      systemPrompt,
-      stopReason: result.stopReason,
-      usage: checkpointUsage(result.usage),
-      timestamp: new Date().toISOString(),
-    },
-    extraction,
-  };
-
-  const outputPath = path.join(outputDir, `${stem}-extract.json`);
-  fs.writeFileSync(outputPath, JSON.stringify(checkpoint, null, 2), "utf-8");
-
-  const e = extraction as { characters: unknown[]; relationships: unknown[]; events: unknown[] };
-  console.log("");
-  console.log("Extraction summary");
-  console.log("------------------");
-  console.log(`Characters:     ${e.characters.length}`);
-  console.log(`Relationships:  ${e.relationships.length}`);
-  console.log(`Events:         ${e.events.length}`);
-  // The reasoning split is shown only when it was reported — the probe that
-  // settles the effort question reads it here, and blank is honest about a
-  // vendor that said nothing.
-  const reasoning =
-    result.usage.reasoningTokens === undefined ? "" : `, of which ${result.usage.reasoningTokens} reasoning`;
-  console.log(`Tokens:         ${result.usage.inputTokens} in / ${result.usage.outputTokens} out${reasoning}`);
-  console.log(`Output written: ${outputPath}`);
+  // Pass the spawned command's outcome straight through — a wrapper that
+  // reported its own exit code would be a second opinion about what happened.
+  child.on("exit", (code, signal) => {
+    process.exitCode = signal !== null ? 1 : code ?? 1;
+  });
 }
 
-// Only run the CLI when executed directly — buildSystemPrompt is also
-// imported by the test suite, which must not trigger a real run.
 if (require.main === module) {
-  main().catch((err) => {
-    // Which vendor's error class this is stays behind the seam — the handler
-    // asks for a description and falls through only for a genuine bug.
-    const apiError = apiErrorMessage(err);
-    if (apiError) {
-      console.error(apiError);
-    } else {
-      console.error("Extraction failed:", err);
-    }
-    process.exitCode = 1;
-  });
+  main();
 }

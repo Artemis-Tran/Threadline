@@ -336,6 +336,9 @@ export function costUsd(inputTokens: number, outputTokens: number, rates: ModelR
 
 export interface CliOptions {
   parsedJsonPath: string;
+  // Print the chapter index ↔ title mapping and stop. Makes no API call and
+  // reads nothing but the parsed book, so finding an index costs nothing.
+  list: boolean;
   from: number | null;
   to: number | null;
   skip: Set<number>;
@@ -365,6 +368,7 @@ function parseIndexList(value: string, flag: string): number[] {
 export function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
     parsedJsonPath: "",
+    list: false,
     from: null,
     to: null,
     skip: new Set(),
@@ -402,6 +406,9 @@ export function parseArgs(argv: string[]): CliOptions {
         }
         break;
       }
+      case "--list":
+        opts.list = true;
+        break;
       case "--dry-run":
         opts.dryRun = true;
         break;
@@ -438,7 +445,7 @@ export function parseArgs(argv: string[]): CliOptions {
 
   if (!opts.parsedJsonPath) {
     throw new Error(
-      "Usage: tsx src/extract-book.ts <parsed-json-path> [--from N] [--to N] [--skip 11,28] [--dry-run] [--force [12,13]] [--yes] [--rebuild-manifest] [--model <id>] [--out-dir <path>] [--roster <path>]"
+      "Usage: tsx src/extract-book.ts <parsed-json-path> [--list] [--from N] [--to N] [--skip 11,28] [--dry-run] [--force [12,13]] [--yes] [--rebuild-manifest] [--model <id>] [--out-dir <path>] [--roster <path>]"
     );
   }
   if (opts.from !== null && opts.to !== null && opts.from > opts.to) {
@@ -464,6 +471,35 @@ export interface ChapterPlan {
   skipReason: SkipReason | null;
   hasCheckpoint: boolean;
   willExtract: boolean;
+}
+
+// The chapter index ↔ title mapping, one line per flow item. The array index is
+// NOT the book's chapter number — front matter and POV interludes are
+// interleaved — so picking an index for --from/--to/--force means looking here
+// first. Falls back to the chapter's opening line for an untitled item.
+export function chapterIndexLines(book: ParsedBook): string[] {
+  return book.chapters.map((c) => {
+    const title = c.title ?? c.text.split("\n")[0].slice(0, 80);
+    return `${String(c.index).padStart(3)} | ${String(c.wordCount).padStart(5)} words | ${title}`;
+  });
+}
+
+// A forced index means "extract this one, period", so one the book does not
+// have is an operator error rather than an empty selection. Without this it
+// falls through to "Nothing to extract or load. Check --from/--to/--skip",
+// which names flags the operator may never have typed — the single-chapter
+// probe forwards --force, so that is exactly what its user would see after
+// mistyping a chapter index.
+//
+// Only the upper bound is checked: both argument parsers accept digits only,
+// so a negative index cannot reach here.
+export function assertForceIndicesInRange(forceIndices: Set<number>, chapterCount: number): void {
+  const outOfRange = [...forceIndices].filter((i) => i >= chapterCount).sort((a, b) => a - b);
+  if (outOfRange.length > 0) {
+    throw new Error(
+      `No such chapter: ${outOfRange.join(", ")}. This book's indices run [0, ${chapterCount - 1}] — run with --list to see them.`
+    );
+  }
 }
 
 export function checkpointPath(chunksDir: string, index: number): string {
@@ -505,14 +541,18 @@ export function estimateCostUsd(plans: ChapterPlan[], model: ModelInfo): number 
   return (inputTokens * model.rates.inputUsdPerMTok + outputTokens * model.rates.outputUsdPerMTok) / 1e6;
 }
 
-// Stage 3 still owns its own Anthropic call path — only stage 2 goes through the
-// extraction seam — so a registry row served by another vendor would end up as a
-// foreign model ID inside an Anthropic request. Reject it up front, where the
-// message can point somewhere useful, rather than partway into a book.
+// Extraction still builds its own Anthropic request here rather than going
+// through the extraction seam (ADR-0008), so a registry row served by another
+// vendor would end up as a foreign model ID inside an Anthropic request. Reject
+// it up front rather than partway into a book.
+//
+// This is the only extraction path there is — the single-chapter probe forwards
+// here — so the message must not point anywhere as a workaround. It cannot be
+// worked around; putting this command behind the seam is what removes it.
 export function assertProviderSupported(model: ModelInfo): void {
   if (model.provider !== "anthropic") {
     throw new Error(
-      `${model.id} is served by ${model.provider}, and extract-book only supports Anthropic models for now. Try it on a single chapter with extract-chapter instead.`
+      `${model.id} is served by ${model.provider}, and extraction only supports Anthropic models for now.`
     );
   }
 }
@@ -776,6 +816,16 @@ async function main() {
     throw new Error(`File not found: ${opts.parsedJsonPath}`);
   }
   const book: ParsedBook = JSON.parse(fs.readFileSync(opts.parsedJsonPath, "utf-8"));
+
+  // Ahead of everything else, including the roster file: a listing exists to
+  // find a chapter index, so it must not be gated on flags that only matter
+  // once one has been chosen, and it must stay free.
+  if (opts.list) {
+    for (const line of chapterIndexLines(book)) console.log(line);
+    return;
+  }
+
+  assertForceIndicesInRange(opts.forceIndices, book.chapters.length);
 
   // Validated up front — before the plan, the cost gate, and any API call — so
   // a malformed roster file costs nothing and fails where the message is still

@@ -2,14 +2,17 @@
 // system prompt, chapter text, a JSON schema, and an output budget, and get back
 // a normalised ExtractionResult, without knowing which vendor served it.
 //
-// Stage 2 (extract-chapter) calls through here. Stage 3 (extract-book) still has
-// its own Anthropic call path and is deliberately left alone for now — wiring it
-// up is separate work, gated on real output from a second provider first.
+// Nothing calls through here yet. extract-book still has its own Anthropic call
+// path (ADR-0008), and the single-chapter probe — which used to be this seam's
+// one caller — now forwards to extract-book rather than extracting itself. The
+// seam and its tests stay because putting extract-book behind it is the pending
+// work this was built for, and it is the only OpenAI path there is.
 //
 // The seam reports what happened; it does not decide how to report it. Refusals,
 // truncation, and unparseable output are all ordinary results here — the calling
-// command owns presentation, because stage 2 dumps raw text and sets an exit
-// code while stage 3 throws for its caller to persist a partial manifest.
+// command owns presentation, because one caller may want to dump raw text and
+// set an exit code where another throws so its caller can persist a partial
+// manifest.
 //
 // Everything vendor-specific stops at this file: the SDK clients, the two
 // request shapes, the two vocabularies for "it went wrong", and the error
@@ -153,9 +156,9 @@ export function apiErrorMessage(err: unknown): string | null {
 // OpenAI as reasoning tokens — which is exactly the kind of thing this seam
 // exists to flatten, rather than an OpenAI concern leaking across it.
 //
-// Exported because stage 3 still builds its own Anthropic request (ADR-0008)
-// and would otherwise have to know the vendor's field name itself. It goes when
-// stage 3 moves behind the seam.
+// Exported because extract-book still builds its own Anthropic request
+// (ADR-0008) and would otherwise have to know the vendor's field name itself.
+// It goes when extract-book moves behind the seam.
 export function anthropicReasoningTokens(usage: AnthropicUsage): number | undefined {
   return asTokenCount(usage.output_tokens_details?.thinking_tokens);
 }
@@ -284,7 +287,8 @@ async function callOpenAI(
 }
 
 // `client` is optional so tests can drive the real composition with a fake,
-// mirroring how stage 3's per-chapter processing already receives its client.
+// mirroring how extract-book's per-chapter processing already receives its
+// client.
 // A live run passes nothing and gets a real SDK client for the request's
 // provider. A caller passing a client is responsible for it matching that
 // provider — the cast below is that contract, and both branches are covered by
