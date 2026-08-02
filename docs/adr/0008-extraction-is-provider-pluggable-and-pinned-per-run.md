@@ -164,18 +164,52 @@ under-quotes stops being a gate. The vendor's reported output count already
 includes reasoning tokens, so no separate accounting is needed.
 
 Read the ceiling for what it is: 1290 is the higher of two *efforts* on one
-chapter, not a ceiling across chapter lengths. That chapter was 1358 words
-against the reference book's ~1937-word average, and output scales with input,
-so a long chapter can spend more than 1290 and be under-quoted. The gate is a
-whole-run total, and over 48 chapters the short ones subsidise the long ones, so
-this bites a single-chapter probe of a long chapter rather than a book run. It is
-a known limit of a one-chapter measurement, not an oversight — narrowing it means
-measuring more chapters, which is what the next OpenAI run should be spent on.
+chapter, not a ceiling across chapters. It was recorded here as a known limit of
+a one-chapter measurement, to be narrowed by spending the next OpenAI run on more
+chapters. That run has been spent — three consecutive chapters, indices 4–6 of the
+reference book, on Luna at the pinned low effort — and it did not narrow the
+limit so much as refute the shape of it:
+
+| idx | words | characters | est. output | actual output |
+|---|---|---|---|---|
+| 4 | 1560 | 9 | 1290 | 1353 |
+| 5 | 1576 | 19 | 1290 | 1777 |
+| 6 | 1969 | 14 | 1290 | 1499 |
+
+All three overran. 1290 is not a ceiling; it is under the floor of every chapter
+measured so far, and the run spent 4629 output tokens against 3870 quoted — 120%
+of the output side.
+
+The predicted cause was wrong too, and that is the more useful correction. The
+expectation above was that output scales with input, so a *long* chapter would
+overrun. The shortest chapter here overran, and the worst overrun was the
+middle-length one. What separates them is how many characters the chapter yields:
+19 for the worst, 9 for the mildest, at 94–150 output tokens per extracted
+character throughout. Output tracks the size of the answer, and the answer is a
+roster, not a retelling. A chapter that introduces a crowd is the expensive one —
+which is why the probed chapter under-read it, having found six names.
+
+The whole-run quote still held, at $0.007351 spent against $0.008121 quoted. It
+held by compensating error rather than by design: the 2.7-tokens-per-word input
+constant quoted 17384 input tokens against 8979 actually spent, and that slack
+paid for the output overrun. Two errors of opposite sign in one gate is a worse
+position than one honest over-estimate, because tightening either side alone
+un-covers the other. Correcting the row is deliberately left to its own ticket
+rather than folded into the port that measured it, and the input constant must
+not be tightened before the output row is.
 
 The per-word input constant is deliberately left alone at 2.7. It tracks the
 Anthropic baseline closely (measured 2.65) and over-estimates OpenAI, which is
 the safe direction: the probed chapter was 1358 words and 2455 input tokens,
 1.81 per word.
+
+The three-chapter run measured 1.52, 1.88 and 1.85 per word, and the rise across
+them is not noise — the roster is carried into every later chapter's prompt, so
+input per word climbs as the roster grows. The constant is flat, so it
+over-quotes the opening chapters most and least by the end of a book. That is
+still the safe direction, and it is invisible to a one-chapter probe, which
+always runs against an empty roster and therefore always measures the cheapest
+chapter a run will have.
 
 Correcting the estimate changed what that decision costs, and the arithmetic is
 worth stating because it inverts. Against the old 12000 the input side was ~6%
