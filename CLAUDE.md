@@ -98,8 +98,6 @@ provider-derived, so an Anthropic run never asks for one.
 
 ## Guardrails
 
-- Scope each session to one pipeline stage. Check before jumping ahead, even
-  when the next step seems obvious.
 - Don't call the Anthropic API in bulk — looping over many chapters or many
   books — without confirming first. That's where real money gets spent.
 - If output looks broken (empty, malformed JSON, suspiciously short chapter
