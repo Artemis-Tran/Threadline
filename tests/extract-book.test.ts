@@ -14,6 +14,7 @@ import {
   indexFromCheckpoint,
   readCheckpointCharacters,
   updateRoster,
+  readRosterFile,
   buildSystemPrompt,
   assertProviderSupported,
   CliOptions,
@@ -39,6 +40,7 @@ function defaultOpts(overrides: Partial<CliOptions> = {}): CliOptions {
     rebuildManifest: false,
     model: "claude-sonnet-5",
     outDir: null,
+    rosterPath: null,
     ...overrides,
   };
 }
@@ -61,6 +63,19 @@ function book(chapters: ParsedChapter[]): ParsedBook {
 
 function extractedCharacter(name: string, overrides: Partial<ExtractedCharacter> = {}): ExtractedCharacter {
   return { name, aliases: [], description: `${name} description`, role: "minor", ...overrides };
+}
+
+// Write `contents` to a throwaway roster file, run `fn` against its path, and
+// clean up either way.
+function withRosterFile(contents: string, fn: (rosterPath: string) => void): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-roster-"));
+  try {
+    const rosterPath = path.join(dir, "roster.json");
+    fs.writeFileSync(rosterPath, contents, "utf-8");
+    fn(rosterPath);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // --- parseArgs -----------------------------------------------------------
@@ -124,6 +139,26 @@ describe("parseArgs", () => {
     assert.equal(parseArgs(["book.json", "--out-dir", "output/ab-haiku"]).outDir, "output/ab-haiku");
     assert.throws(() => parseArgs(["book.json", "--out-dir"]), /--out-dir expects/);
     assert.throws(() => parseArgs(["book.json", "--out-dir", "--yes"]), /--out-dir expects/);
+  });
+
+  test("--roster carries a path; defaults to null", () => {
+    assert.equal(parseArgs(["book.json"]).rosterPath, null);
+    assert.equal(parseArgs(["book.json", "--roster", "probe-roster.json"]).rosterPath, "probe-roster.json");
+    assert.throws(() => parseArgs(["book.json", "--roster"]), /--roster expects/);
+    assert.throws(() => parseArgs(["book.json", "--roster", "--yes"]), /--roster expects/);
+  });
+
+  test("rejects --roster alongside --rebuild-manifest", () => {
+    // A rebuild's roster has to stay derived from the chapter extracts on disk,
+    // or the manifest asserts characters nothing on disk backs.
+    assert.throws(
+      () => parseArgs(["book.json", "--roster", "r.json", "--rebuild-manifest"]),
+      /cannot be combined with --rebuild-manifest/
+    );
+    assert.throws(
+      () => parseArgs(["book.json", "--rebuild-manifest", "--roster", "r.json"]),
+      /cannot be combined with --rebuild-manifest/
+    );
   });
 });
 
@@ -400,6 +435,99 @@ describe("updateRoster", () => {
   });
 });
 
+// --- supplied roster file ----------------------------------------------------
+
+// Every case here runs before any API call would be made, so a rejected file
+// costs nothing — that's the property these tests exist to pin down.
+describe("readRosterFile", () => {
+  const VALID: RosterEntry[] = [
+    {
+      name: "Henry Ashford",
+      aliases: ["Young Master Ashford"],
+      description: "a potter's apprentice",
+      firstAppearedChapterIndex: 4,
+      lastAppearedChapterIndex: 9,
+    },
+  ];
+
+  test("reads a JSON array of roster entries", () => {
+    withRosterFile(JSON.stringify(VALID), (rosterPath) => {
+      assert.deepEqual(readRosterFile(rosterPath), VALID);
+    });
+  });
+
+  test("accepts an empty array as an empty roster", () => {
+    withRosterFile("[]", (rosterPath) => {
+      assert.deepEqual(readRosterFile(rosterPath), []);
+    });
+  });
+
+  test("entries are taken verbatim, not re-normalized like an accumulated roster", () => {
+    // updateRoster would strip the parenthetical, drop the generic alias, and
+    // truncate the description. A supplied roster is deliberately exempt: the
+    // flag exists to hand the model an adversarial roster, and silently
+    // rewriting the operator's file would defeat that.
+    const adversarial = [
+      {
+        name: "Marcus (blacksmith's apprentice)",
+        aliases: ["his brother"],
+        description: "x".repeat(400),
+        firstAppearedChapterIndex: 0,
+        lastAppearedChapterIndex: 0,
+      },
+    ];
+    withRosterFile(JSON.stringify(adversarial), (rosterPath) => {
+      assert.deepEqual(readRosterFile(rosterPath), adversarial);
+    });
+  });
+
+  test("rejects a missing file", () => {
+    assert.throws(() => readRosterFile("/nonexistent/roster.json"), /--roster file not found/);
+  });
+
+  test("rejects unparseable JSON", () => {
+    withRosterFile("{not json", (rosterPath) => {
+      assert.throws(() => readRosterFile(rosterPath), /--roster file is not valid JSON/);
+    });
+  });
+
+  test("rejects a top-level value that is not an array", () => {
+    withRosterFile('"Henry"', (rosterPath) => {
+      assert.throws(() => readRosterFile(rosterPath), /must contain a JSON array/);
+    });
+  });
+
+  test("points a whole manifest at its roster array rather than just refusing", () => {
+    withRosterFile(JSON.stringify({ meta: {}, chapters: [], roster: VALID }), (rosterPath) => {
+      assert.throws(() => readRosterFile(rosterPath), /pass its `roster` array/);
+    });
+  });
+
+  test("names the offending entry and field", () => {
+    const cases: [unknown, RegExp][] = [
+      ["Henry", /entry 0 .*object/],
+      [{ ...VALID[0], name: "" }, /entry 0 .*`name`/],
+      [{ ...VALID[0], name: 42 }, /entry 0 .*`name`/],
+      [{ ...VALID[0], aliases: "Ash" }, /entry 0 .*`aliases`/],
+      [{ ...VALID[0], aliases: ["Ash", 7] }, /entry 0 .*`aliases`/],
+      [{ ...VALID[0], description: null }, /entry 0 .*`description`/],
+      [{ ...VALID[0], firstAppearedChapterIndex: "4" }, /entry 0 .*`firstAppearedChapterIndex`/],
+      [{ ...VALID[0], lastAppearedChapterIndex: -1 }, /entry 0 .*`lastAppearedChapterIndex`/],
+    ];
+    for (const [entry, expected] of cases) {
+      withRosterFile(JSON.stringify([entry]), (rosterPath) => {
+        assert.throws(() => readRosterFile(rosterPath), expected);
+      });
+    }
+  });
+
+  test("reports the position of a bad entry later in the array", () => {
+    withRosterFile(JSON.stringify([VALID[0], { ...VALID[0], description: 3 }]), (rosterPath) => {
+      assert.throws(() => readRosterFile(rosterPath), /entry 1 /);
+    });
+  });
+});
+
 // --- system prompt -----------------------------------------------------------
 
 describe("extract-book buildSystemPrompt", () => {
@@ -417,5 +545,29 @@ describe("extract-book buildSystemPrompt", () => {
     assert.match(prompt, /Characters known so far/);
     assert.match(prompt, /- name: Henry \| also called: Mystic Potter \| a potter/);
     assert.match(prompt, /use exactly the listed `name:` value/);
+  });
+
+  // The point of the --roster flag: a one-chapter probe must send the same
+  // request a chapter deep into a book would send. If a supplied roster and an
+  // accumulated one could produce different prompts, the probe would be
+  // measuring the flag rather than the model.
+  test("a supplied roster produces a byte-identical prompt to an accumulated one", () => {
+    const accumulated: RosterEntry[] = [];
+    updateRoster(
+      accumulated,
+      [
+        extractedCharacter("Henry Ashford", { aliases: ["Young Master Ashford"] }),
+        extractedCharacter("Mira", { aliases: ["the Mystic Potter"] }),
+      ],
+      4
+    );
+    updateRoster(accumulated, [extractedCharacter("Henry Ashford", { description: "a longer description" })], 7);
+
+    withRosterFile(JSON.stringify(accumulated, null, 2), (rosterPath) => {
+      assert.equal(
+        buildSystemPrompt("Test Book", readRosterFile(rosterPath)),
+        buildSystemPrompt("Test Book", accumulated)
+      );
+    });
   });
 });

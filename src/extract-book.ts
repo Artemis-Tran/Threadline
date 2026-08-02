@@ -165,6 +165,80 @@ export function updateRoster(roster: RosterEntry[], characters: ExtractedCharact
   }
 }
 
+// Read a roster supplied with --roster, so a run can start from a roster it did
+// not accumulate. This exists for the single-chapter probe: without it, asking
+// "does this extraction model reuse a roster entry's name verbatim?" means
+// paying for the chapters that would build one.
+//
+// Entries are used verbatim — none of updateRoster's normalization (parenthetical
+// stripping, generic-alias filtering, the alias cap, the description truncation)
+// is applied. The flag's whole purpose is handing the model a deliberately
+// adversarial roster, and silently rewriting the operator's file would defeat
+// that. A roster copied out of a manifest is already normalized, so the
+// prompt-identity property that matters holds regardless.
+//
+// Every failure here throws before the caller reaches an API call, so a bad
+// file costs nothing.
+export function readRosterFile(rosterPath: string): RosterEntry[] {
+  const resolved = path.resolve(rosterPath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`--roster file not found: ${resolved}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(resolved, "utf-8"));
+  } catch (err) {
+    throw new Error(`--roster file is not valid JSON (${(err as Error).message}): ${resolved}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    // A manifest is the obvious near-miss — it's where an operator gets a real
+    // roster from — so name the fix rather than just the rejection.
+    const hint =
+      isObject(parsed) && Array.isArray((parsed as { roster?: unknown }).roster)
+        ? " — this looks like a manifest; pass its `roster` array instead"
+        : "";
+    throw new Error(`--roster file must contain a JSON array of roster entries${hint}: ${resolved}`);
+  }
+
+  parsed.forEach((entry, i) => assertRosterEntry(entry, i, resolved));
+  return parsed as RosterEntry[];
+}
+
+function isObject(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Requires the full RosterEntry shape rather than just the three fields the
+// prompt reads: a supplied entry is folded into the running roster by
+// updateRoster and written to the manifest, both of which use the chapter
+// indices. Accepting a partial entry would put `undefined` in a manifest.
+function assertRosterEntry(entry: unknown, i: number, rosterPath: string): void {
+  const bad = (problem: string): never => {
+    throw new Error(`--roster entry ${i} ${problem} (in ${rosterPath})`);
+  };
+
+  if (!isObject(entry)) bad("is not an object");
+  const e = entry as Record<string, unknown>;
+
+  if (typeof e.name !== "string" || e.name.trim().length === 0) {
+    bad("needs a non-empty string `name`");
+  }
+  if (!Array.isArray(e.aliases) || e.aliases.some((a) => typeof a !== "string")) {
+    bad("needs an `aliases` array of strings");
+  }
+  if (typeof e.description !== "string") {
+    bad("needs a string `description`");
+  }
+  for (const key of ["firstAppearedChapterIndex", "lastAppearedChapterIndex"] as const) {
+    const value = e[key];
+    if (!Number.isInteger(value) || (value as number) < 0) {
+      bad(`needs a non-negative integer \`${key}\``);
+    }
+  }
+}
+
 // Load a checkpoint's characters with a clear error if the file is malformed,
 // truncated, or from an incompatible schema — rather than a bare TypeError
 // deep inside updateRoster that doesn't name the offending file.
@@ -253,6 +327,9 @@ export interface CliOptions {
   // Override for the chunks output dir. Null = the default output/{slug}-chunks.
   // Lets an A/B run write elsewhere without clobbering the baseline's chunks.
   outDir: string | null;
+  // Path to a JSON array of roster entries to start the run with. Null = the
+  // roster is built only by replaying earlier chapters, as it always was.
+  rosterPath: string | null;
 }
 
 function parseIndexList(value: string, flag: string): number[] {
@@ -275,6 +352,7 @@ export function parseArgs(argv: string[]): CliOptions {
     rebuildManifest: false,
     model: DEFAULT_MODEL,
     outDir: null,
+    rosterPath: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -322,6 +400,12 @@ export function parseArgs(argv: string[]): CliOptions {
         opts.outDir = value;
         break;
       }
+      case "--roster": {
+        const value = argv[++i];
+        if (!value || value.startsWith("--")) throw new Error("--roster expects a path");
+        opts.rosterPath = value;
+        break;
+      }
       default:
         if (arg.startsWith("--")) throw new Error(`Unknown flag: ${arg}`);
         if (opts.parsedJsonPath) throw new Error(`Unexpected argument: ${arg}`);
@@ -331,11 +415,18 @@ export function parseArgs(argv: string[]): CliOptions {
 
   if (!opts.parsedJsonPath) {
     throw new Error(
-      "Usage: tsx src/extract-book.ts <parsed-json-path> [--from N] [--to N] [--skip 11,28] [--dry-run] [--force [12,13]] [--yes] [--rebuild-manifest] [--model <id>] [--out-dir <path>]"
+      "Usage: tsx src/extract-book.ts <parsed-json-path> [--from N] [--to N] [--skip 11,28] [--dry-run] [--force [12,13]] [--yes] [--rebuild-manifest] [--model <id>] [--out-dir <path>] [--roster <path>]"
     );
   }
   if (opts.from !== null && opts.to !== null && opts.from > opts.to) {
     throw new Error(`--from (${opts.from}) must not exceed --to (${opts.to}).`);
+  }
+  // A rebuild makes no API calls and exists to reproduce a manifest from the
+  // chapter extracts on disk — so its roster must stay purely derived from them.
+  // Seeding it would persist operator-supplied entries into the manifest that
+  // ADR-0006 makes later stages trust, with nothing on disk to back them.
+  if (opts.rosterPath !== null && opts.rebuildManifest) {
+    throw new Error("--roster cannot be combined with --rebuild-manifest: a rebuilt manifest's roster must come only from the chapter extracts on disk.");
   }
   return opts;
 }
@@ -459,6 +550,7 @@ function writeManifest(
       totalOutputTokens: totals.outputTokens,
       actualCostUsd: costUsd(totals.inputTokens, totals.outputTokens, rates),
       rosterSize: roster.length,
+      ...(opts.rosterPath === null ? {} : { rosterPath: path.resolve(opts.rosterPath) }),
     },
     chapters: manifestChapters,
     roster,
@@ -620,6 +712,11 @@ async function main() {
   }
   const book: ParsedBook = JSON.parse(fs.readFileSync(opts.parsedJsonPath, "utf-8"));
 
+  // Validated up front — before the plan, the cost gate, and any API call — so
+  // a malformed roster file costs nothing and fails where the message is still
+  // about the file rather than about a run that already started.
+  const suppliedRoster = opts.rosterPath === null ? [] : readRosterFile(opts.rosterPath);
+
   const slug = deriveSlug(opts.parsedJsonPath);
   const chunksDir = opts.outDir
     ? path.resolve(opts.outDir)
@@ -644,6 +741,12 @@ async function main() {
   console.log(
     `${toExtract.length} chapters to extract (${cachedCount} cached, ${pendingCount} pending, ${skippedCount} skipped) — estimated cost ~$${estCost.toFixed(2)} with ${opts.model}`
   );
+  // The roster is normally invisible input; when it was supplied rather than
+  // accumulated, say so — it changes every prompt this run sends.
+  if (opts.rosterPath !== null) {
+    const n = suppliedRoster.length;
+    console.log(`Roster seeded with ${n} ${n === 1 ? "entry" : "entries"} from ${opts.rosterPath}`);
+  }
 
   // Dry-run wins over every other mode: preview only, never touch disk.
   if (opts.dryRun) {
@@ -658,6 +761,7 @@ async function main() {
         `--rebuild-manifest requires a checkpoint for every narrative chapter; missing: ${missing.map((p) => p.chapter.index).join(", ")}`
       );
     }
+    // Not seeded from --roster: parseArgs rejects that combination.
     const roster: RosterEntry[] = [];
     const manifestChapters: ManifestChapterEntry[] = [];
     const totals: Totals = { inputTokens: 0, outputTokens: 0, apiCalls: 0 };
@@ -694,8 +798,10 @@ async function main() {
   const client = toExtract.length > 0 ? new Anthropic() : null;
 
   // Accumulators owned here so a mid-run failure still has the partial state
-  // (real token totals, chapters completed so far) to persist.
-  const roster: RosterEntry[] = [];
+  // (real token totals, chapters completed so far) to persist. A supplied roster
+  // seeds the accumulator; each chapter then folds into it exactly as it would
+  // have folded into an accumulated one.
+  const roster: RosterEntry[] = [...suppliedRoster];
   const manifestChapters: ManifestChapterEntry[] = [];
   const totals: Totals = { inputTokens: 0, outputTokens: 0, apiCalls: 0 };
   const manifestPath = path.join(chunksDir, MANIFEST_FILE);

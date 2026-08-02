@@ -43,8 +43,18 @@ npm run build -w web          # → web/dist
 
 Notable flags: `--model <id>` on the extraction commands (default
 `claude-sonnet-5`; shorthands `sonnet`/`haiku`/`opus`/`luna`/`terra`),
-`--out-dir <path>` on `extract-book`, and `--progression-order <path>` on
-`merge-thread`.
+`--out-dir <path>` and `--roster <path>` on `extract-book`, and
+`--progression-order <path>` on `merge-thread`.
+
+`--roster` takes a JSON array of roster entries (the shape of a manifest's
+`roster` field) and starts the run from it instead of accumulating one by
+replaying earlier chapters. It exists so a single-chapter run can be handed a
+deliberately adversarial roster and answer "does this model reuse a roster
+entry's name verbatim?" in one paid call. Entries are used verbatim — none of
+`updateRoster`'s normalization is applied — and a missing, unparseable, or
+wrong-shaped file aborts before any API call. It cannot be combined with
+`--rebuild-manifest`, whose roster must stay derived from the chapter extracts
+on disk. A seeded run records `rosterPath` in its manifest `meta`.
 
 `src/models.ts` is the model allowlist, pricing table, and the authority on
 which vendor serves a row. An unpriced or misspelled model is rejected before

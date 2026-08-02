@@ -161,8 +161,9 @@ deep links work) and remembered per-book across visits.
 
 Useful `extract-book` flags: `--from N` / `--to N` / `--skip 3,5`
 `--force [12,13]` / `--yes` / `--rebuild-manifest` / `--model <id>` /
-`--out-dir <path>`. Useful `merge-thread` / `book` flags: `--out <path>` /
-`--progression-order <path>`. `book` also accepts `--model <id>`.
+`--out-dir <path>` / `--roster <path>`. Useful `merge-thread` / `book` flags:
+`--out <path>` / `--progression-order <path>`. `book` also accepts
+`--model <id>`.
 
 ---
 

@@ -90,6 +90,10 @@ export interface Manifest {
     totalOutputTokens: number;
     actualCostUsd: number;
     rosterSize: number;
+    // Set only when the run was started from a --roster file. Without it a
+    // seeded run's manifest is indistinguishable from one whose roster was
+    // built entirely by replaying chapter extracts.
+    rosterPath?: string;
   };
   chapters: ManifestChapterEntry[];
   roster: RosterEntry[];
