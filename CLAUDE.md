@@ -106,6 +106,9 @@ is unmeasured.
 
 - `/src` — extraction pipeline (pure CLI, no web or DB deps)
 - `/web` — the static wiki SPA (npm workspace)
+- `/scripts` — one-off migrations over `/output`, run by hand with `tsx` and
+  kept as the record of what was done to paid output. Not pipeline source, not
+  typechecked by `npm run build`, no npm script. Each is dry-run by default
 - `.github/workflows/deploy.yml` — builds `web/`, publishes to GitHub Pages on
   push to `master`. Live at https://artemis-tran.github.io/Threadline/
   (base path `/Threadline/` in `vite.config.ts`, overridable via
