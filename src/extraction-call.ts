@@ -133,6 +133,19 @@ const OPENAI_SCHEMA_NAME = "chapter_extraction";
 // under the cost gate (ADR-0008).
 const OPENAI_REASONING_EFFORT = "low";
 
+// What effort a run on this provider is pinned to, or null where the vendor has
+// no such concept. Exported because the pin is a constant rather than a flag, so
+// the request body is otherwise the only place the effort exists and nothing on
+// disk would say which effort produced an extract. Two runs of the same book at
+// different efforts are indistinguishable without this, which is a real hazard
+// once more than one exists.
+//
+// Null, not a default string, for Anthropic: it keeps the field off every
+// Anthropic extract rather than stamping a level that means nothing there.
+export function reasoningEffort(provider: Provider): string | null {
+  return provider === "openai" ? OPENAI_REASONING_EFFORT : null;
+}
+
 const API_KEY_ENV_VARS: Record<Provider, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",

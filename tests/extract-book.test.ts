@@ -23,7 +23,7 @@ import {
   ChapterRunInput,
   processChapters,
 } from "../src/extract-book";
-import { ExtractionClient } from "../src/extraction-call";
+import { ExtractionClient, reasoningEffort } from "../src/extraction-call";
 import { ParsedBook, ParsedChapter, RosterEntry, ExtractedCharacter, Extraction } from "../src/types";
 import { resolveModel } from "../src/models";
 
@@ -840,6 +840,14 @@ describe("extractChapter", () => {
     assert.equal(meta.modelReturned, SERVED_SNAPSHOT);
   });
 
+  test("carries no reasoning-effort field, which Anthropic has no concept of", async () => {
+    // The key is absent rather than null. A no-flag Anthropic extract has to
+    // stay byte-identical to the ones already on disk, and stamping a level
+    // that means nothing on this vendor would be worse than saying nothing.
+    const meta = await writtenMeta(anthropicUsage());
+    assert.equal("reasoningEffort" in meta, false);
+  });
+
   test("stamps the reasoning split under the seam's normalised name", async () => {
     const written = await writtenUsage(anthropicUsage({ output_tokens_details: { thinking_tokens: 214 } }));
     assert.equal(written.reasoning_tokens, 214);
@@ -1109,6 +1117,19 @@ describe("processChapters", () => {
         const meta = writtenMetaAt(dir, 4);
         assert.equal(meta.model, "gpt-5.6-luna");
         assert.equal(meta.modelReturned, OPENAI_SERVED_SNAPSHOT);
+      });
+    });
+
+    test("stamps the reasoning effort the run was pinned to", async () => {
+      await withChunksDir(async (dir) => {
+        await (await runOpenAIChapter(dir, OK)).run;
+
+        // Without this an extract says which model produced it but not at what
+        // effort, so two runs of the same book at different efforts are
+        // indistinguishable on disk. The value comes from the seam's pin rather
+        // than being restated here, so flipping the pin cannot leave the stamp
+        // lying.
+        assert.equal(writtenMetaAt(dir, 4).reasoningEffort, reasoningEffort("openai"));
       });
     });
 

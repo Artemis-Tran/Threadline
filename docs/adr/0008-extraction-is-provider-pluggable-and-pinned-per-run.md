@@ -133,6 +133,17 @@ also passed the probe's gating checks: closed vocabularies honoured, and a
 roster entry (`"Henry Ashford"`) reused verbatim against a chapter that says
 "Henry" 22 times and never "Ashford".
 
+The pinned effort is stamped onto every chapter extract and onto the manifest,
+under `reasoningEffort`, taken from the seam's pin rather than restated by the
+caller. Because the pin is a constant and not a flag, the request body was
+otherwise the only place the effort existed, and nothing on disk said which
+effort produced an extract — two runs of the same book at different efforts were
+indistinguishable except by what someone had named the directory. That was
+tolerable while the only multi-effort runs were two one-chapter probes; it stops
+being tolerable as soon as a whole book exists at more than one effort. The field
+is absent, not null, on Anthropic extracts: that vendor has no such concept, and
+a no-flag Anthropic run's output stays byte-identical to what is already on disk.
+
 This is one chapter, and it settles the question it was run to settle rather
 than the general one. It shows medium buying nothing on a chapter where low
 already succeeds; it does not show that no chapter exists where deliberation

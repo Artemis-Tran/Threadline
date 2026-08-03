@@ -6,6 +6,7 @@ import {
   callExtraction,
   apiErrorMessage,
   apiKeyEnvVar,
+  reasoningEffort,
   AnthropicExtractionClient,
   OpenAIExtractionClient,
 } from "../src/extraction-call";
@@ -239,6 +240,23 @@ describe("callExtraction OpenAI request shaping", () => {
     await callExtraction(OPENAI_REQUEST, client);
 
     assert.equal(calls[0].reasoning?.effort, "low");
+  });
+
+  test("reports the pinned effort it sent, so a run's output can record it", async () => {
+    // The pin is a constant, not a flag, so the request is the only place the
+    // effort exists — and nothing on disk would say which effort produced an
+    // extract. Reporting it here is what lets a caller stamp it.
+    const { client, calls } = fakeOpenAIClient(openAIResponse());
+    await callExtraction(OPENAI_REQUEST, client);
+
+    assert.equal(reasoningEffort("openai"), calls[0].reasoning?.effort);
+  });
+
+  test("reports no effort for Anthropic, where the concept does not apply", async () => {
+    // Null rather than a default string: an Anthropic run has no effort level,
+    // and inventing one would put a meaningless field on every Anthropic
+    // extract.
+    assert.equal(reasoningEffort("anthropic"), null);
   });
 
   test("passes the same schema object both vendors get, unmodified", async () => {

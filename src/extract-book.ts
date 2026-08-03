@@ -21,6 +21,7 @@ import {
   callExtraction,
   apiErrorMessage,
   apiKeyEnvVar,
+  reasoningEffort,
   ExtractionClient,
   ExtractionUsage,
 } from "./extraction-call";
@@ -570,10 +571,15 @@ function writeManifest(
   complete: boolean,
   fileName: string = MANIFEST_FILE
 ): void {
-  const rates = resolveModel(opts.model).rates;
+  const model = resolveModel(opts.model);
+  const rates = model.rates;
+  const effort = reasoningEffort(model.provider);
   const manifest = {
     meta: {
       model: opts.model,
+      // Beside the model for the same reason the chapter extracts carry it:
+      // this is the file a comparison tool reads to say what produced a run.
+      ...(effort === null ? {} : { reasoningEffort: effort }),
       parsedJsonPath: path.resolve(opts.parsedJsonPath),
       bookTitle: book.title,
       timestamp: new Date().toISOString(),
@@ -650,6 +656,8 @@ export async function extractChapter(
     );
   }
 
+  const effort = reasoningEffort(model.provider);
+
   const checkpoint = {
     meta: {
       // The registry ID that was *requested*, not the string the vendor
@@ -660,6 +668,11 @@ export async function extractChapter(
       // silently re-pointed alias stays visible.
       model: model.id,
       modelReturned: response.modelReturned,
+      // Which effort the seam is pinned to for this provider, absent on a
+      // vendor that has no such concept. The model alone does not identify a
+      // run: the same book at two efforts produces two different sets of
+      // extracts, and without this they are indistinguishable on disk.
+      ...(effort === null ? {} : { reasoningEffort: effort }),
       chapterIndex: chapter.index,
       chapterTitle: chapter.title,
       chapterWordCount: chapter.wordCount,
