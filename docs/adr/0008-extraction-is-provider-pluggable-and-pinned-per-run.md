@@ -151,6 +151,73 @@ would help. Reopening this means new measurement, not a re-run of the original
 argument. ADR-0004's conclusion is untouched either way: Sonnet is still the
 default.
 
+### The measurement came, and the probe had been asking the wrong chapter
+
+Three whole-book Luna runs, at low, high and max, against The Potter's Path:
+
+| run | cost | wall time | characters | Merrick ≠ Pelham | Lydia ≠ Martha | Greaves intact |
+|---|---|---|---|---|---|---|
+| Sonnet (baseline) | $3.95 | — | 67 | ✓ | ✓ | ✓ |
+| Luna low | $0.12 | 8m | 115 | ✗ | ✗ | ✓ |
+| Luna high | $0.25 | 22m | 116 | ✓ | ✓ | ✗ |
+| Luna max | $1.04 | 104m | 138 | ✓ | ✓ | ✗ |
+
+**Deliberation does buy something, and the one-chapter probe could not have seen
+it.** At low, Luna emits `"Davos Merrick"` carrying `"Pelham"`, `"Lord Pelham"`
+and `"Lord Garrett Pelham"` as aliases — two distinct characters collapsed into
+one — and `"Lydia"` carrying `"Martha"`, a one-scene customer folded into the
+baker. Both are extraction-time errors, not merge-time ones, and both are then
+propagated by the roster: once written, the bad alias enters the roster, the
+roster enters every later prompt, and the Lydia/Martha merge rides forward
+through five chapters. High and max both eliminate both.
+
+The reason the earlier probe concluded otherwise is a flaw in the probe, not in
+the reasoning. It ran chapter 1 at each effort. Chapter 1 has an empty roster and
+nine unambiguous characters, so there is no identity judgment to make and nothing
+for deliberation to do — an identical character set at both efforts was the only
+possible outcome. Identity errors happen deep into a book against a large roster,
+where the model must decide whether a name it is seeing is someone it has already
+met. A probe against an empty roster structurally cannot test the failure the
+roster exists to prevent. The original argument for medium — a judgment failure
+rather than a transcription one, against which deliberation is a plausible lever
+— was directionally right and was retired on evidence that could not bear on it.
+
+**Effort saturates above high.** Max is identical to high on every defect
+measured: the same two fixes, and the same failure, splitting `"Greaves"` into
+`"Blacksmith next door"` (21 chapters) and `"Greaves"` (4 chapters) with the same
+division. For four times the money and five times the wall time it changes no
+correctness outcome, and it makes roster noise worse — 138 characters against
+high's 116, 64% of them appearing in a single chapter.
+
+**No Luna effort is clean, and the failures are opposites.** Low collapses
+distinct people into one entry; high and max split one person across two. ADR-0004
+names both as the cheap-model failure on this task, and Luna picks one or the
+other depending on effort rather than escaping the pair. High's fragmentation is
+arguably the worse of the two: Greaves is a 24-chapter principal, where
+Pelham and Martha are minor. Sonnet exhibits neither at any point. ADR-0004's
+default is not merely untouched by this; it is reinforced.
+
+### Max effort is operationally unusable at the current token ceiling
+
+`MAX_TOKENS` is 16000, and reasoning draws on it alongside the answer. At max
+effort on an entity-dense chapter that budget is not close to enough. Chapter
+index 5 — 16 characters — exhausted a deliberately raised 24000-token ceiling and
+returned **no text at all**: the whole budget went to reasoning and the answer was
+never begun, so the run aborted having paid for nothing. At 64000 the same chapter
+completed, spending 28,782 output tokens of which 26,945 were reasoning, to
+produce a 1,837-token answer. A 15:1 reasoning-to-answer ratio.
+
+Thirteen of the book's 47 chapters carry 12 or more characters, so this is not an
+edge case; it is a quarter of the book. Anyone reaching for max has to raise the
+ceiling first, and each failed attempt costs the full ceiling in output tokens
+because the failure mode is silence rather than a short answer. The truncation
+path behaves correctly throughout — text preserved, partial manifest written,
+complete manifest untouched, run aborted rather than writing a half-answer — which
+is the only reason a budget this wrong is survivable.
+
+The pin is left at low pending a decision, because raising it is a cost change
+to every future Luna run and not merely a correctness fix.
+
 ## Consequences
 
 Effort spends against the only reason Luna's row exists. Luna earns it by
@@ -187,9 +254,18 @@ limit so much as refute the shape of it:
 | 5 | 1576 | 19 | 1290 | 1777 |
 | 6 | 1969 | 14 | 1290 | 1499 |
 
-All three overran. 1290 is not a ceiling; it is under the floor of every chapter
-measured so far, and the run spent 4629 output tokens against 3870 quoted — 120%
+All three overran, and the run spent 4629 output tokens against 3870 quoted — 120%
 of the output side.
+
+A whole-book run at the same effort has since put that in proportion, and the
+three-chapter figure was the more misleading of the two. Across 47 chapters low
+spent 62,107 output tokens, averaging 1,322 against the row's 1290 — over by 2%,
+not 20%. Chapters 4–6 are the book's opening, where the roster is being built from
+nothing and every character is new, so they are unusually character-dense and
+overstate the overrun. The row is still wrong in the unsafe direction, and a
+single chapter can still exceed it badly; it is not wrong by anything like the
+margin the first sample suggested. Take this as a caution about three-chapter
+windows as much as about the row.
 
 The predicted cause was wrong too, and that is the more useful correction. The
 expectation above was that output scales with input, so a *long* chapter would
@@ -213,6 +289,13 @@ The per-word input constant is deliberately left alone at 2.7. It tracks the
 Anthropic baseline closely (measured 2.65) and over-estimates OpenAI, which is
 the safe direction: the probed chapter was 1358 words and 2455 input tokens,
 1.81 per word.
+
+One thing the row's name hides: `outputTokenEstimate` is not a property of the
+model. It is a property of the model *and* the pinned effort together. The same
+book on the same row spent 62,107 output tokens at low, 167,647 at high and
+823,173 at max — the row is 2.8× under at high and 13.9× under at max. Nothing in
+the registry records that dependency, so moving the pin silently invalidates the
+gate. Whoever changes one must change the other in the same breath.
 
 The three-chapter run measured 1.52, 1.88 and 1.85 per word, and the rise across
 them is not noise — the roster is carried into every later chapter's prompt, so

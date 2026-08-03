@@ -118,14 +118,24 @@ const OPENAI_SCHEMA_NAME = "chapter_extraction";
 // The family defaults to medium; we pin low, so the pin is now load-bearing
 // rather than a restatement of the default.
 //
-// Low was medium's rival on argument and beat it on measurement. The argued case
-// for medium was that the established cheap-model failure on this task is roster
-// noise — walk-ons promoted to characters, one person split across several
-// entries (ADR-0004) — a judgment failure that deliberation is a plausible lever
-// against. The Luna probe ran one chapter at both efforts: medium spent 382
-// reasoning tokens for a bit-for-bit identical character set, same six names and
-// same three walk-on promotions. The noise medium was bought to suppress is
-// identical at low, so it does not earn its price.
+// Low won a one-chapter probe against medium and is now known to have won it on
+// a chapter that could not test the thing at issue. That probe ran chapter 1,
+// which has an empty roster and nine unambiguous characters, so there was no
+// identity judgment to make and an identical character set at both efforts was
+// the only available outcome.
+//
+// Whole-book runs since say the opposite. At low, Luna collapses distinct
+// characters into one entry — Pelham absorbed into Davos Merrick, a one-scene
+// customer absorbed into Lydia the baker — and the roster then carries the bad
+// alias forward into every later chapter. High eliminates both for about $0.13
+// more per book. Max matches high exactly and costs four times as much, so the
+// scale saturates above high.
+//
+// Low stays pinned anyway, for now: raising it is a cost change to every future
+// Luna run, and no effort makes Luna clean — high and max split one character
+// across two entries where low merges two into one. Sonnet does neither and is
+// still the default (ADR-0004). Do not re-litigate this from the chapter-1
+// numbers; see ADR-0008 for what has actually been measured.
 //
 // Still a constant and not a flag: reasoning tokens bill as output and spend the
 // same budget the answer needs, so effort has to be a level the registry's
