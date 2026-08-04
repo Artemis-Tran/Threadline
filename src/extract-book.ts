@@ -124,7 +124,7 @@ export function buildSystemPrompt(bookTitle: string | null, roster: RosterEntry[
     "In `relationships` and `events`, refer to characters using exactly the same `name` values you used in `characters`.",
     "Judge `role` within this chapter only: \"pov\" is the chapter's viewpoint character, \"major\" is central to this chapter's events, \"supporting\" plays an active but secondary part, \"minor\" appears briefly, \"mentioned\" is named but does not appear.",
     "Judge each event's `significance` to the story: \"major\", \"moderate\", or \"minor\".",
-    "Set `kind` to \"collective\" when an entry stands for more than one entity — a body, crew, household, order, or crowd acting together, such as a guild council or the dock workers. Set it to \"individual\" for a single entity, including a non-human one.",
+    "Set `kind` to \"collective\" when an entry stands for more than one entity — a body, crew, household, order, crowd, business, or institution acting together, such as a guild council, a trading company, or the dock workers. Set it to \"individual\" for a single entity, including a non-human one.",
   ];
 
   if (roster.length > 0) {
