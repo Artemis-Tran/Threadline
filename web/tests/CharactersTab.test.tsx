@@ -11,7 +11,7 @@ import CharactersTab from "../src/components/CharactersTab";
 // no search box yet.
 
 function char(id: string, role: CharacterRole): CharacterView {
-  return { id, name: id.toUpperCase(), role, description: "", aliases: [], firstSeenChapterIndex: 1 };
+  return { id, name: id.toUpperCase(), role, description: "", aliases: [], firstSeenChapterIndex: 1, kind: "individual" };
 }
 
 const chapterLabel = (index: number) => `Chapter ${index}`;

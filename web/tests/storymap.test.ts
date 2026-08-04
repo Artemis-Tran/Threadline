@@ -16,7 +16,7 @@ import {
 // --- fixtures ---
 
 function char(id: string, role: CharacterRole, firstSeen = 1, name = id.toUpperCase()): CharacterView {
-  return { id, name, role, description: "", aliases: [], firstSeenChapterIndex: firstSeen };
+  return { id, name, role, description: "", aliases: [], firstSeenChapterIndex: firstSeen, kind: "individual" };
 }
 
 function ev(

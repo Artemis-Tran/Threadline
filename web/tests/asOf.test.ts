@@ -4,6 +4,7 @@ import {
   chapterRange,
   chapterTitleMap,
   characterAsOf,
+  characterListAsOf,
   charactersAsOf,
   eventsAsOf,
   eventsForCharacterAsOf,
@@ -83,7 +84,7 @@ test("CharacterView structurally excludes whole-book and future fields", () => {
   const hen = charactersAsOf(makeThread(), 2).find((c) => c.id === "hen")!;
   assert.deepEqual(
     Object.keys(hen).sort(),
-    ["aliases", "description", "firstSeenChapterIndex", "id", "name", "role"]
+    ["aliases", "description", "firstSeenChapterIndex", "id", "kind", "name", "role"]
   );
 });
 
@@ -109,6 +110,83 @@ test("role is the highest prominence seen <= cutoff", () => {
   thread.characters[1].lastAppearedChapterIndex = 2;
   const mara = charactersAsOf(thread, 2).find((c) => c.id === "mara")!;
   assert.equal(mara.role, "supporting"); // not demoted to "mentioned"
+});
+
+// --- collectives -----------------------------------------------------------
+//
+// A collective ("Guild council") is kept in the thread and hidden from the
+// Characters list only. Everything that resolves a character by id must keep
+// working, or filtering the list would leave dead links elsewhere in the wiki.
+
+// The Guild council first appears at chapter 2, so the cap can be shown to
+// apply before the kind filter rather than after it.
+function threadWithCollective() {
+  const thread = makeThread();
+  thread.characters.push({
+    id: "guild-council",
+    name: "Guild council",
+    aliases: [],
+    description: "The council that governs the guild.",
+    kind: "collective",
+    appearances: [
+      {
+        chapterIndex: 2,
+        chapterTitle: "Chapter 2",
+        name: "Guild council",
+        aliases: [],
+        description: "The council that governs the guild.",
+        role: "supporting",
+        kind: "collective",
+      },
+    ],
+    firstAppearedChapterIndex: 2,
+    lastAppearedChapterIndex: 2,
+    conflicts: [],
+    progressionRegressions: [],
+  });
+  thread.meta.characterCount = thread.characters.length;
+  return thread;
+}
+
+test("charactersAsOf keeps collectives, so the graph and story map can resolve them", () => {
+  const ids = charactersAsOf(threadWithCollective(), 2).map((c) => c.id);
+  assert.ok(ids.includes("guild-council"));
+});
+
+test("characterListAsOf drops collectives and keeps everyone else", () => {
+  const ids = characterListAsOf(threadWithCollective(), 2).map((c) => c.id);
+  assert.deepEqual(ids.sort(), ["hen", "mara"]);
+});
+
+test("an untagged character is listed, because absent means individual", () => {
+  // makeThread's characters carry no `kind` at all — a thread merged before
+  // the tag existed. Every one of them still shows up.
+  const ids = characterListAsOf(makeThread(), 2).map((c) => c.id);
+  assert.deepEqual(ids.sort(), ["hen", "mara"]);
+  assert.deepEqual(
+    charactersAsOf(makeThread(), 2).map((c) => c.kind),
+    ["individual", "individual"]
+  );
+});
+
+test("the chapter cap is applied before the kind filter, never after", () => {
+  // At the cap of 1 the collective is out because it hasn't appeared yet, not
+  // because it was filtered — so a character the reader hasn't reached can
+  // never be surfaced by the filter changing.
+  const thread = threadWithCollective();
+  assert.deepEqual(characterListAsOf(thread, 1).map((c) => c.id), ["hen", "mara"]);
+  assert.deepEqual(charactersAsOf(thread, 1).map((c) => c.id), ["hen", "mara"]);
+});
+
+test("a filtered-out collective is still resolvable by id", () => {
+  const detail = characterAsOf(threadWithCollective(), 2, "guild-council");
+  assert.equal(detail?.name, "Guild council");
+  assert.equal(detail?.kind, "collective");
+  assert.equal(detail?.appearances.length, 1);
+});
+
+test("the Characters tab count matches the list it labels", () => {
+  assert.equal(statsAsOf(threadWithCollective(), 2).characters, 2);
 });
 
 test("characterAsOf returns appearances only up to the cutoff", () => {

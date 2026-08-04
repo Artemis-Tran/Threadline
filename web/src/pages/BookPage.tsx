@@ -6,6 +6,7 @@ import {
   chapterRange,
   chapterTitleMap,
   characterAsOf,
+  characterListAsOf,
   charactersAsOf,
   eventsAsOf,
   eventsForCharacterAsOf,
@@ -245,16 +246,23 @@ export default function BookPage() {
 
   const allCharacters = useMemo(() => (ready ? charactersAsOf(ready.thread, cap) : []), [ready, cap]);
 
+  // The Characters tab lists individuals only; collectives stay in
+  // allCharacters so the graph and story map can still resolve them.
+  const listedCharacters = useMemo(
+    () => (ready ? characterListAsOf(ready.thread, cap) : []),
+    [ready, cap]
+  );
+
   const characters = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return allCharacters;
-    return allCharacters.filter(
+    if (!q) return listedCharacters;
+    return listedCharacters.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         c.description.toLowerCase().includes(q) ||
         c.aliases.some((a) => a.toLowerCase().includes(q))
     );
-  }, [allCharacters, query]);
+  }, [listedCharacters, query]);
 
   // Graph inputs: canonical spoiler-safe identity for every character visible
   // at the cap (unfiltered — the search box must not shrink the graph), plus

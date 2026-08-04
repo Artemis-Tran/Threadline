@@ -50,6 +50,34 @@ test("invalid character role is rejected with its path", () => {
   expectFailure(() => validateThread(thread), "appearances[0].role");
 });
 
+test("a valid character kind is accepted on the character and its appearances", () => {
+  const thread = makeThread();
+  thread.characters[0].kind = "collective";
+  thread.characters[0].appearances[0].kind = "collective";
+  thread.characters[0].appearances[1].kind = "individual";
+  validateThread(thread);
+});
+
+test("an absent character kind is accepted, so threads built before the tag still load", () => {
+  // makeThread carries no `kind` anywhere; the passing case above is the proof
+  // that this test isn't just asserting the field is ignored.
+  const thread = makeThread();
+  assert.equal("kind" in thread.characters[0], false);
+  validateThread(thread);
+});
+
+test("a character kind outside the enum is rejected with its path", () => {
+  const thread = makeThread() as unknown as { characters: { kind: string }[] };
+  thread.characters[0].kind = "group";
+  expectFailure(() => validateThread(thread), "characters[0].kind");
+});
+
+test("an appearance kind outside the enum is rejected with its path", () => {
+  const thread = makeThread() as unknown as { characters: { appearances: { kind: string }[] }[] };
+  thread.characters[0].appearances[0].kind = "";
+  expectFailure(() => validateThread(thread), "appearances[0].kind");
+});
+
 test("null event participant ids are allowed", () => {
   validateThread(makeThread());
 });

@@ -16,6 +16,7 @@ import type { Thread } from "@pipeline/types";
 export class ValidationError extends Error {}
 
 const CHARACTER_ROLES = new Set(["pov", "major", "supporting", "minor", "mentioned"]);
+const CHARACTER_KINDS = new Set(["individual", "collective"]);
 const EVENT_SIGNIFICANCE = new Set(["major", "moderate", "minor"]);
 
 function fail(path: string, msg: string): never {
@@ -55,6 +56,17 @@ function arr(x: unknown, path: string): unknown[] {
 
 function strArr(x: unknown, path: string): void {
   for (const [i, v] of arr(x, path).entries()) str(v, `${path}[${i}]`);
+}
+
+// `kind` is optional at every level it appears: a thread merged before the tag
+// existed carries none at all, and refusing those would invalidate output the
+// reader already paid for. Present-but-outside-the-enum is still a hard fail —
+// that is a corrupted or hand-edited file, not an older one.
+function optionalKind(x: unknown, path: string): void {
+  if (x === undefined) return;
+  if (typeof x !== "string" || !CHARACTER_KINDS.has(x)) {
+    fail(path, `expected one of ${[...CHARACTER_KINDS].join("/")}`);
+  }
 }
 
 function validateConflictBound(b: unknown, path: string): void {
@@ -120,6 +132,7 @@ export function validateThread(x: unknown): asserts x is Thread {
     str(c.name, `${p}.name`);
     strArr(c.aliases, `${p}.aliases`);
     str(c.description, `${p}.description`);
+    optionalKind(c.kind, `${p}.kind`);
     nonNegativeInt(c.firstAppearedChapterIndex, `${p}.firstAppearedChapterIndex`);
     nonNegativeInt(c.lastAppearedChapterIndex, `${p}.lastAppearedChapterIndex`);
     for (const [j, cf] of arr(c.conflicts, `${p}.conflicts`).entries()) {
@@ -141,6 +154,7 @@ export function validateThread(x: unknown): asserts x is Thread {
       if (typeof a.role !== "string" || !CHARACTER_ROLES.has(a.role)) {
         fail(`${q}.role`, `expected one of ${[...CHARACTER_ROLES].join("/")}`);
       }
+      optionalKind(a.kind, `${q}.kind`);
     }
   }
 

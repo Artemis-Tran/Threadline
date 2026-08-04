@@ -1,4 +1,5 @@
 import type {
+  CharacterKind,
   CharacterRole,
   EventSignificance,
   MergedCharacter,
@@ -29,6 +30,11 @@ export interface CharacterView {
   description: string; // latest appearance description <= cutoff
   aliases: string[]; // cumulative union across appearances <= cutoff
   firstSeenChapterIndex: number;
+  // Resolved, never optional: an untagged thread character reads "individual"
+  // here, so every consumer sees one representation instead of re-deciding
+  // what a missing tag means. Not recomputed from the surviving appearances —
+  // it is the merge step's whole-book reconciliation, carried through as-is.
+  kind: CharacterKind;
 }
 
 export interface AppearanceView {
@@ -197,9 +203,14 @@ function toCharacterView(character: MergedCharacter, cutoff: number): CharacterV
     description: latest.description,
     aliases,
     firstSeenChapterIndex: seen[0].chapterIndex,
+    kind: character.kind ?? "individual",
   };
 }
 
+// Every character with an appearance at or before the cutoff, collectives
+// included. This is the catalog the rest of the wiki resolves against — the
+// relationship graph's node identities and the story map both need a collective
+// to keep its name and role.
 export function charactersAsOf(thread: Thread, cutoff: number): CharacterView[] {
   return thread.characters
     .map((c) => toCharacterView(c, cutoff))
@@ -210,6 +221,18 @@ export function charactersAsOf(thread: Thread, cutoff: number): CharacterView[] 
         a.firstSeenChapterIndex - b.firstSeenChapterIndex ||
         a.name.localeCompare(b.name)
     );
+}
+
+// The browsable Characters list: the same set with collectives dropped. The cap
+// is applied first and the kind filter second, so this can only ever be a
+// subset of what the reader is already entitled to see.
+//
+// This is the ONLY place a collective is hidden. It stays in charactersAsOf, it
+// stays resolvable by id through characterAsOf, and it keeps its relationships
+// and event participations — so filtering the list leaves no dead links, and
+// the eventual group feature is additive rather than a re-extraction.
+export function characterListAsOf(thread: Thread, cutoff: number): CharacterView[] {
+  return charactersAsOf(thread, cutoff).filter((c) => c.kind !== "collective");
 }
 
 function conflictView(c: TierConflict, key: string): ConflictView {
@@ -326,7 +349,9 @@ export function eventsForCharacterAsOf(thread: Thread, cutoff: number, id: strin
 }
 
 export function statsAsOf(thread: Thread, cutoff: number): StatsView {
-  const characters = charactersAsOf(thread, cutoff).length;
+  // Counts the listed set, not the catalog: this number is the badge on the
+  // Characters tab, so it has to agree with the list the tab renders.
+  const characters = characterListAsOf(thread, cutoff).length;
   const relationships = thread.relationships.filter((r) =>
     r.history.some((s) => s.chapterIndex <= cutoff)
   ).length;
