@@ -813,6 +813,20 @@ describe("extract-book buildSystemPrompt", () => {
     }
   });
 
+  // Same deal as the collective rule above, and the same warning: this proves
+  // the inclusion rule is in the request, not that the model applies it. Two
+  // assertions, one per half of the rule — what a character is, and that
+  // scene-position walk-ons are not one.
+  test("the character inclusion rule reaches the prompt, with and without a roster", () => {
+    const roster: RosterEntry[] = [
+      { name: "Henry", aliases: [], description: "a potter", firstAppearedChapterIndex: 1, lastAppearedChapterIndex: 2 },
+    ];
+    for (const prompt of [buildSystemPrompt("Test Book", []), buildSystemPrompt("Test Book", roster)]) {
+      assert.match(prompt, /stable designator/);
+      assert.match(prompt, /must not create an entry/);
+    }
+  });
+
   // The point of the --roster flag: a one-chapter probe must send the same
   // request a chapter deep into a book would send. If a supplied roster and an
   // accumulated one could produce different prompts, the probe would be
