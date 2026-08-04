@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import type { CharacterRole, EventSignificance } from "@pipeline/types";
 import type { CharacterView, EventView } from "../src/lib/asOf";

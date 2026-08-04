@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import type { RelationshipEdgeView } from "../src/lib/asOf";
 import { deriveEgoSubgraph, neighborCount, type NodeCatalog } from "../src/lib/graph";
