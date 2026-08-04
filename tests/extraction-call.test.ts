@@ -233,13 +233,13 @@ describe("callExtraction OpenAI request shaping", () => {
   test("pins reasoning effort rather than leaving it unset", async () => {
     // Pinned, not defaulted: reasoning tokens bill as output and share the
     // answer's budget, so the effort has to be a decision the registry's output
-    // estimate is sized against. Low is the measured winner — medium spent 382
-    // reasoning tokens for an identical character set — and pinning it still
-    // matters even though the value now differs from the vendor's default.
+    // estimate is sized against. High is the measured winner — at low, Luna
+    // fuses distinct characters into one entry and the roster carries the bad
+    // alias forward, which no later step can undo (ADR-0007).
     const { client, calls } = fakeOpenAIClient(openAIResponse());
     await callExtraction(OPENAI_REQUEST, client);
 
-    assert.equal(calls[0].reasoning?.effort, "low");
+    assert.equal(calls[0].reasoning?.effort, "high");
   });
 
   test("reports the pinned effort it sent, so a run's output can record it", async () => {
@@ -249,6 +249,7 @@ describe("callExtraction OpenAI request shaping", () => {
     const { client, calls } = fakeOpenAIClient(openAIResponse());
     await callExtraction(OPENAI_REQUEST, client);
 
+    assert.equal(reasoningEffort("openai"), "high");
     assert.equal(reasoningEffort("openai"), calls[0].reasoning?.effort);
   });
 

@@ -115,33 +115,31 @@ export type ExtractionClient = AnthropicExtractionClient | OpenAIExtractionClien
 const OPENAI_SCHEMA_NAME = "chapter_extraction";
 
 // GPT-5.6 takes none/low/medium/high/xhigh/max (the family dropped "minimal").
-// The family defaults to medium; we pin low, so the pin is now load-bearing
-// rather than a restatement of the default.
+// The family defaults to medium; we pin high, so the pin is load-bearing rather
+// than a restatement of the default.
 //
-// Low won a one-chapter probe against medium and is now known to have won it on
-// a chapter that could not test the thing at issue. That probe ran chapter 1,
-// which has an empty roster and nine unambiguous characters, so there was no
+// High is pinned because low fuses distinct characters into a single entry —
+// Pelham absorbed into Davos Merrick, a one-scene customer absorbed into Lydia
+// the baker — and the roster then carries the bad alias forward into every later
+// chapter. The merge step cannot split what extraction fused (ADR-0007), so that
+// is unrecoverable without re-extracting the book. High eliminates both
+// collapses for about $0.13 more per book. Max matches high on every defect
+// measured, at four times the cost and with worse roster noise, so the scale
+// saturates here and buying more is buying nothing.
+//
+// Low held this pin for a while on a one-chapter probe against medium, run on
+// chapter 1 — an empty roster and nine unambiguous characters, so there was no
 // identity judgment to make and an identical character set at both efforts was
-// the only available outcome.
-//
-// Whole-book runs since say the opposite. At low, Luna collapses distinct
-// characters into one entry — Pelham absorbed into Davos Merrick, a one-scene
-// customer absorbed into Lydia the baker — and the roster then carries the bad
-// alias forward into every later chapter. High eliminates both for about $0.13
-// more per book. Max matches high exactly and costs four times as much, so the
-// scale saturates above high.
-//
-// Low stays pinned anyway, for now: raising it is a cost change to every future
-// Luna run, and no effort makes Luna clean — high and max split one character
-// across two entries where low merges two into one. Sonnet does neither and is
-// still the default (ADR-0004). Do not re-litigate this from the chapter-1
-// numbers; see ADR-0008 for what has actually been measured.
+// the only available outcome. Do not re-litigate this from those numbers; a
+// probe against an empty roster structurally cannot test identity resolution.
+// See ADR-0008 for what has actually been measured.
 //
 // Still a constant and not a flag: reasoning tokens bill as output and spend the
 // same budget the answer needs, so effort has to be a level the registry's
 // output estimate is sized against rather than something a run can move out from
-// under the cost gate (ADR-0008).
-const OPENAI_REASONING_EFFORT = "low";
+// under the cost gate (ADR-0008). Moving this pin means moving the OpenAI rows'
+// outputTokenEstimate in the same breath — the row is sized against an effort.
+const OPENAI_REASONING_EFFORT = "high";
 
 // What effort a run on this provider is pinned to, or null where the vendor has
 // no such concept. Exported because the pin is a constant rather than a flag, so

@@ -88,10 +88,12 @@ any API call, and reusing one model's cached extracts under a different
 `luna`/`terra` are OpenAI GPT-5.6 rows and are runnable: `extract-book` goes
 through `src/extraction-call.ts`, which owns both vendors' request shapes, so
 the probe and a book run both reach OpenAI. Neither is a default; Sonnet still
-is (ADR-0004), and Luna's extraction quality beyond a single probed chapter is
-unmeasured. Reasoning effort is pinned in the seam rather than exposed as a
-flag, so the registry's output estimate is always sized against a known effort
-level (ADR-0008).
+is (ADR-0004). Luna has now been measured across whole books at three reasoning
+efforts, and no effort makes it clean — low fuses distinct characters into one
+entry, high and max split one across two (ADR-0008). Reasoning effort is pinned
+in the seam at `high` rather than exposed as a flag, so the registry's output
+estimate is always sized against a known effort level. Moving that pin means
+moving the OpenAI rows' `outputTokenEstimate` in the same change (ADR-0008).
 
 ## Tech stack
 

@@ -2,6 +2,11 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resolveModel, DEFAULT_MODEL } from "../src/models";
 
+// Output tokens a single OpenAI extraction call actually spends at the pinned
+// effort: 167,647 across the reference book's 47 calls on Luna at high. The
+// figure the registry's ceiling has to clear, measured rather than assumed.
+const OPENAI_MEASURED_OUTPUT_PER_CALL = 3567;
+
 describe("resolveModel", () => {
   test("resolves friendly aliases to full IDs", () => {
     assert.equal(resolveModel("sonnet").id, "claude-sonnet-5");
@@ -37,12 +42,15 @@ describe("resolveModel", () => {
     assert.equal(resolveModel("opus").outputTokenEstimate, 2000);
   });
 
-  test("prices the OpenAI rows from the probe's higher run", () => {
-    // 1290 output tokens is the medium-effort run of the Luna probe, taken over
-    // low's 1054 to keep the row a ceiling rather than a mean. It replaces an
-    // unmeasured 12000 that over-quoted the probed chapter 7.5×.
-    assert.equal(resolveModel("luna").outputTokenEstimate, 1290);
-    assert.equal(resolveModel("terra").outputTokenEstimate, 1290);
+  test("keeps the OpenAI rows a ceiling over what the pinned effort spends", () => {
+    // The property, not the number: a row's estimate is documented as a ceiling,
+    // and `outputTokenEstimate` is a property of the model *and* the pinned
+    // effort together. At the pinned high effort a whole book spent 167,647
+    // output tokens over 47 calls — 3,567 per call — so a row below that has
+    // stopped being a gate. Asserting the invariant rather than the constant
+    // leaves headroom free to change and under-quoting caught.
+    assert.ok(resolveModel("luna").outputTokenEstimate >= OPENAI_MEASURED_OUTPUT_PER_CALL);
+    assert.ok(resolveModel("terra").outputTokenEstimate >= OPENAI_MEASURED_OUTPUT_PER_CALL);
   });
 
   test("rejects unknown models with the accepted list", () => {

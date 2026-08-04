@@ -406,10 +406,35 @@ describe("costUsd / estimateCostUsd", () => {
     // Each row's estimate is charged rather than a single global figure. The
     // input side is the same 3900 tokens Sonnet is charged for above — the
     // per-word constant is deliberately shared, and over-estimates OpenAI.
-    // 1290 is the registry's figure, pinned in models.test.ts; spelled out here
-    // so this test fails on the arithmetic rather than tracking the row.
-    const expected = (3900 * 0.2 + 1290 * 1.2) / 1e6;
+    // 4500 is the registry's figure; spelled out here so this test fails on the
+    // arithmetic rather than tracking the row.
+    const expected = (3900 * 0.2 + 4500 * 1.2) / 1e6;
     assert.ok(Math.abs(estimateCostUsd(plans, resolveModel("luna")) - expected) < 1e-9);
+  });
+
+  test("estimateCostUsd budgets an OpenAI run at or above what a call spends", () => {
+    // The gate's whole purpose, as a property rather than a number: a quote that
+    // under-reads the run it is guarding is not a gate. The floor is what the
+    // reference book actually spent per call on Luna at the pinned high effort —
+    // 167,647 output tokens over 47 calls.
+    //
+    // The input side is backed out rather than left to pad the comparison, so
+    // this measures the quote's output budget and nothing else. Two chapters of
+    // 1000 words are 3900 input tokens each, by the same arithmetic the tests
+    // above spell out.
+    const OPENAI_MEASURED_OUTPUT_PER_CALL = 3567;
+    const luna = resolveModel("luna");
+    const plans = planChapters(
+      book([chapter(0, "Chapter 1", 1000), chapter(1, "Chapter 2", 1000)]),
+      defaultOpts(),
+      "/nonexistent-chunks-dir"
+    );
+
+    const inputUsd = (plans.length * 3900 * luna.rates.inputUsdPerMTok) / 1e6;
+    const budgetedOutputTokens =
+      ((estimateCostUsd(plans, luna) - inputUsd) * 1e6) / luna.rates.outputUsdPerMTok;
+
+    assert.ok(budgetedOutputTokens / plans.length >= OPENAI_MEASURED_OUTPUT_PER_CALL);
   });
 });
 
