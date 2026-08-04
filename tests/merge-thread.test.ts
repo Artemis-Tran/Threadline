@@ -522,6 +522,95 @@ describe("buildCharacters", () => {
     assert.deepEqual(characters[0].conflicts, detectTierConflicts(characters[0].appearances));
   });
 
+  // --- kind reconciliation ---
+  //
+  // Chapters are extracted independently, so their `kind` tags can disagree.
+  // The merged answer is the majority of appearances, ties to "individual".
+
+  test("a character tagged collective in every chapter merges as a collective", () => {
+    const { characters } = buildCharacters([
+      chunk(1, { characters: [character("Guild council", { kind: "collective" })] }),
+      chunk(2, { characters: [character("Guild council", { kind: "collective" })] }),
+    ]);
+    assert.equal(characters.length, 1);
+    assert.equal(characters[0].kind, "collective");
+  });
+
+  test("a single stray collective tag among many individual appearances cannot hide a character", () => {
+    const { characters } = buildCharacters([
+      chunk(1, { characters: [character("Henry", { kind: "collective" })] }),
+      chunk(2, { characters: [character("Henry", { kind: "individual" })] }),
+      chunk(3, { characters: [character("Henry", { kind: "individual" })] }),
+    ]);
+    assert.equal(characters.length, 1);
+    assert.equal(characters[0].kind, "individual");
+  });
+
+  test("an even split resolves to individual rather than hiding the character", () => {
+    const { characters } = buildCharacters([
+      chunk(1, { characters: [character("Dock workers", { kind: "collective" })] }),
+      chunk(2, { characters: [character("Dock workers", { kind: "individual" })] }),
+    ]);
+    assert.equal(characters[0].kind, "individual");
+  });
+
+  test("a character with no kind on any appearance merges as an individual", () => {
+    const { characters } = buildCharacters([
+      chunk(1, { characters: [character("Henry")] }),
+      chunk(2, { characters: [character("Henry")] }),
+    ]);
+    assert.equal(characters[0].kind, "individual");
+  });
+
+  test("an untagged appearance counts toward individual, so it can outvote one collective tag", () => {
+    const { characters } = buildCharacters([
+      chunk(1, { characters: [character("Henry", { kind: "collective" })] }),
+      chunk(2, { characters: [character("Henry")] }),
+      chunk(3, { characters: [character("Henry")] }),
+    ]);
+    assert.equal(characters[0].kind, "individual");
+  });
+
+  test("each appearance keeps the kind its own chapter reported", () => {
+    const { characters } = buildCharacters([
+      chunk(1, { characters: [character("Guild council", { kind: "collective" })] }),
+      chunk(2, { characters: [character("Guild council")] }),
+    ]);
+    assert.deepEqual(
+      characters[0].appearances.map((a) => a.kind),
+      ["collective", undefined]
+    );
+  });
+
+  test("kind is decided by the votes, never by the name", () => {
+    // Names that read unmistakably like collectives, tagged individual by every
+    // chapter, must stay individual — no name-based heuristic anywhere.
+    const { characters } = buildCharacters([
+      chunk(1, {
+        characters: [
+          character("Dock workers", { kind: "individual" }),
+          character("The Council", { kind: "individual" }),
+        ],
+      }),
+    ]);
+    assert.deepEqual(
+      characters.map((c) => c.kind),
+      ["individual", "individual"]
+    );
+  });
+
+  test("kind is resolved across all appearances a late-discovered identity overlap merged together", () => {
+    // "Henry" and "Henry Ashford" only unify once the chapter-3 alias links
+    // them, so the vote has to run after unification, not during the replay.
+    const { characters } = buildCharacters([
+      chunk(1, { characters: [character("Henry", { kind: "collective" })] }),
+      chunk(2, { characters: [character("Henry Ashford", { kind: "individual" })] }),
+      chunk(3, { characters: [character("Henry Ashford", { aliases: ["Henry"], kind: "individual" })] }),
+    ]);
+    assert.equal(characters.length, 1);
+    assert.equal(characters[0].kind, "individual");
+  });
+
   test("characters with empty names after sanitizing are skipped", () => {
     const { characters } = buildCharacters([
       chunk(4, { characters: [character("(the guard)"), character("Henry")] }),

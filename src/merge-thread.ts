@@ -13,6 +13,7 @@ import {
   ProgressionRegression,
   FlattenedProgressionRegression,
   CharacterAppearance,
+  CharacterKind,
   MergedCharacter,
   RelationshipStatement,
   MergedRelationship,
@@ -471,6 +472,24 @@ function preferAsCanonical(v: NameVariant, best: NameVariant): boolean {
   return v.firstIndex < best.firstIndex;
 }
 
+// Reconcile a character's per-appearance `kind` tags into one. Chapters are
+// extracted independently and can disagree, so the merged answer is the
+// MAJORITY of appearances, with a tie resolving to "individual". An untagged
+// appearance counts as "individual", which is what absence means everywhere.
+//
+// The tiebreak is not arbitrary. The two errors are not symmetric: a collective
+// that leaks into the wiki's character list is visible and mildly annoying,
+// while a real character tagged collective by one stray chapter disappears from
+// the list entirely and cannot be found by inspection. Requiring a strict
+// majority means no single stray tag can hide anyone.
+//
+// Nothing here looks at the name. Classification is the model's job via the
+// prompt; this only counts votes.
+function resolveCharacterKind(appearances: CharacterAppearance[]): CharacterKind {
+  const collective = appearances.filter((a) => a.kind === "collective").length;
+  return collective * 2 > appearances.length ? "collective" : "individual";
+}
+
 // Rebuild a full per-character appearance history by replaying every chunk in
 // chapter order, grouping via the same name/alias-overlap matching stage 3's
 // roster hint uses (src/identity.ts). Unlike that roster, nothing here is
@@ -546,6 +565,7 @@ export function buildCharacters(
         aliases,
         description: raw.description,
         role: raw.role,
+        kind: raw.kind,
       });
       target.lastAppearedChapterIndex = chunk.chapterIndex;
       // Recency-first: unconditional overwrite. This is the fix for
@@ -592,6 +612,7 @@ export function buildCharacters(
       return true;
     });
     c.conflicts = toTierConflicts(detectProgressionRegressions(c.appearances, [tierOrder]));
+    c.kind = resolveCharacterKind(c.appearances);
   }
 
   // Built only AFTER unification, from the final characters: identifier sets

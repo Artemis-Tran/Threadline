@@ -12,6 +12,7 @@ import {
   RosterEntry,
   SkipReason,
   ManifestChapterEntry,
+  CHARACTER_KINDS,
   CHARACTER_ROLES,
   EVENT_SIGNIFICANCE,
 } from "./types";
@@ -66,8 +67,16 @@ const EXTRACTION_SCHEMA = {
           aliases: { type: "array", items: { type: "string" } },
           description: { type: "string" },
           role: { type: "string", enum: CHARACTER_ROLES },
+          kind: { type: "string", enum: CHARACTER_KINDS },
         },
-        required: ["name", "aliases", "description", "role"],
+        // `kind` is REQUIRED here while being optional on ExtractedCharacter.
+        // The two are not in tension: optional is a read rule for extracts
+        // written before the tag existed, whereas OpenAI's strict structured
+        // outputs (extraction-call.ts) rejects any schema whose `properties`
+        // and `required` disagree — so leaving it out here would fail every
+        // OpenAI run at the API. Requiring it also forces the model to make
+        // the individual/collective call explicitly on every entry.
+        required: ["name", "aliases", "description", "role", "kind"],
         additionalProperties: false,
       },
     },
@@ -113,6 +122,7 @@ export function buildSystemPrompt(bookTitle: string | null, roster: RosterEntry[
     "In `relationships` and `events`, refer to characters using exactly the same `name` values you used in `characters`.",
     "Judge `role` within this chapter only: \"pov\" is the chapter's viewpoint character, \"major\" is central to this chapter's events, \"supporting\" plays an active but secondary part, \"minor\" appears briefly, \"mentioned\" is named but does not appear.",
     "Judge each event's `significance` to the story: \"major\", \"moderate\", or \"minor\".",
+    "Set `kind` to \"collective\" when an entry stands for more than one entity — a body, crew, household, order, or crowd acting together, such as a guild council or the dock workers. Set it to \"individual\" for a single entity, including a non-human one.",
   ];
 
   if (roster.length > 0) {

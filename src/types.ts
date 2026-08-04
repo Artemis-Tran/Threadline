@@ -30,11 +30,22 @@ export type CharacterRole = (typeof CHARACTER_ROLES)[number];
 export const EVENT_SIGNIFICANCE = ["major", "moderate", "minor"] as const;
 export type EventSignificance = (typeof EVENT_SIGNIFICANCE)[number];
 
+// Whether a character entry stands for one entity or many. "Guild council" and
+// "Dock workers" are collectives; everything else is an individual. The tag is
+// optional everywhere it appears and ABSENT ALWAYS MEANS `individual`, so
+// extracts and threads produced before the tag existed keep reading unchanged.
+// The extraction schema nonetheless requires it (see EXTRACTION_SCHEMA in
+// extract-book.ts) — optionality is a compatibility rule for data already on
+// disk, not a licence for the model to skip the judgment.
+export const CHARACTER_KINDS = ["individual", "collective"] as const;
+export type CharacterKind = (typeof CHARACTER_KINDS)[number];
+
 export interface ExtractedCharacter {
   name: string;
   aliases: string[];
   description: string;
   role: CharacterRole;
+  kind?: CharacterKind;
 }
 
 export interface ExtractedRelationship {
@@ -108,6 +119,10 @@ export interface CharacterAppearance {
   aliases: string[];
   description: string;
   role: CharacterRole;
+  // Carried per-appearance the way `role` is, because chapter extracts are
+  // per-chapter and chapters can disagree. The merged character's own `kind`
+  // reconciles them; see resolveCharacterKind in merge-thread.ts.
+  kind?: CharacterKind;
 }
 
 // Provisional, inferred solely from this book's "<Color> tier" phrasing — not
@@ -158,6 +173,10 @@ export interface MergedCharacter {
   name: string;
   aliases: string[];
   description: string;
+  // Reconciled from `appearances` by the merge step, and always written on a
+  // freshly merged thread. Optional only so threads merged before the tag
+  // existed stay valid — a reader treats absence as `individual`.
+  kind?: CharacterKind;
   appearances: CharacterAppearance[];
   firstAppearedChapterIndex: number;
   lastAppearedChapterIndex: number;

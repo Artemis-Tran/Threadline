@@ -134,8 +134,18 @@ const LUNA_MODEL = resolveModel("gpt-5.6-luna");
 // The captured request, narrowed to what a test asserts on. Both vendors' bodies
 // are read through their own alias so the parameter names stay visible — the
 // prompt travels as `system` for one and `instructions` for the other.
-type CapturedAnthropicRequest = { model: string; max_tokens: number; system?: unknown };
+type CapturedAnthropicRequest = {
+  model: string;
+  max_tokens: number;
+  system?: unknown;
+  output_config?: { format: { schema: CapturedExtractionSchema } };
+};
 type CapturedOpenAIRequest = { model: string; max_output_tokens: number; instructions?: unknown };
+
+// Narrowed the same way, down to the one sub-schema a test asserts on: the
+// shape of a single extracted character.
+type CapturedItemSchema = { properties: Record<string, unknown>; required: string[] };
+type CapturedExtractionSchema = { properties: { characters: { items: CapturedItemSchema } } };
 
 function cannedResponse(canned: CannedResponse) {
   const text = canned.text === undefined ? JSON.stringify(extractionOf("Henry")) : canned.text;
@@ -787,6 +797,19 @@ describe("extract-book buildSystemPrompt", () => {
     assert.match(prompt, /use exactly the listed `name:` value/);
   });
 
+  // Deliberately thin. This seam can prove the collective rule reaches the
+  // model; it can never prove the model obeys it — that is the hand-audit of a
+  // whole-book run. Don't grow a battery of string assertions here.
+  test("the collective rule reaches the prompt, with and without a roster", () => {
+    const roster: RosterEntry[] = [
+      { name: "Henry", aliases: [], description: "a potter", firstAppearedChapterIndex: 1, lastAppearedChapterIndex: 2 },
+    ];
+    for (const prompt of [buildSystemPrompt("Test Book", []), buildSystemPrompt("Test Book", roster)]) {
+      assert.match(prompt, /`kind`/);
+      assert.match(prompt, /collective/);
+    }
+  });
+
   // The point of the --roster flag: a one-chapter probe must send the same
   // request a chapter deep into a book would send. If a supplied roster and an
   // accumulated one could produce different prompts, the probe would be
@@ -851,6 +874,41 @@ describe("extractChapter", () => {
   async function writtenUsage(responseUsage: AnthropicUsagePayload): Promise<WrittenUsage> {
     return (await writtenMeta(responseUsage)).usage;
   }
+
+  // The schema is read back off the captured request rather than exported, so
+  // these assert what a vendor actually receives.
+  async function capturedCharacterSchema(): Promise<CapturedItemSchema> {
+    const { client, requests } = scriptedClient([{}]);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "threadline-extract-"));
+    try {
+      await extractChapter(
+        client,
+        book([chapter(4, "One", 900)]),
+        chapter(4, "One", 900),
+        [],
+        path.join(dir, "idx004-extract.json"),
+        SONNET_MODEL
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    const schema = requests[0].output_config!.format.schema;
+    return schema.properties.characters.items;
+  }
+
+  test("every extracted character carries a kind, enumerated individual/collective", async () => {
+    const { properties } = await capturedCharacterSchema();
+    assert.deepEqual(properties.kind, { type: "string", enum: ["individual", "collective"] });
+  });
+
+  test("the character schema lists every property as required", async () => {
+    // OpenAI's strict structured outputs (extraction-call.ts) rejects a schema
+    // whose `required` omits any key in `properties`. A field left out here
+    // would fail every Luna/Terra run at the API before a token is spent, so
+    // the invariant is asserted rather than left to review.
+    const { properties, required } = await capturedCharacterSchema();
+    assert.deepEqual([...required].sort(), Object.keys(properties).sort());
+  });
 
   // The stamping ADR-0008 chose, and the reason this run's own extracts are
   // reusable at all: `model` is the registry ID that was asked for, so the reuse
