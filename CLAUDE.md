@@ -103,6 +103,14 @@ moving the OpenAI rows' `outputTokenEstimate` in the same change (ADR-0008).
   only extraction path there is (ADR-0008); `dotenv` for the API keys
 - Web (`web/` only): Vite + React + react-router-dom (HashRouter), IndexedDB
   via `idb`, plain CSS modules. No Tailwind, no server, no SQLite/ORM.
+- Two test runners, deliberately: the pipeline (`npm test`) is on node's
+  built-in runner, `web/` (`npm run test:web`) is on Vitest with a jsdom
+  environment so components can be rendered and clicked. Both suites assert
+  with `node:assert/strict`; vitest's globals are off, so web tests import
+  `test` from `"vitest"` explicitly. Component tests use Testing Library
+  (`@testing-library/react` + `user-event`); `web/tests/setup.ts` unmounts
+  between tests, because Testing Library only self-registers that when
+  vitest's globals are on.
 
 ## Project structure
 
