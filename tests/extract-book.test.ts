@@ -293,8 +293,11 @@ describe("parseArgs", () => {
     assert.throws(() => parseArgs(["a", "b"]), /Unexpected argument/);
   });
 
-  test("defaults to Sonnet and resolves --model aliases and full IDs", () => {
-    assert.equal(parseArgs(["book.json"]).model, "claude-sonnet-5");
+  test("defaults to Luna and resolves --model aliases and full IDs", () => {
+    // The default moved from Sonnet with ADR-0009. Sonnet stays one flag away,
+    // which is the line below and not an accident of it.
+    assert.equal(parseArgs(["book.json"]).model, "gpt-5.6-luna");
+    assert.equal(parseArgs(["book.json", "--model", "sonnet"]).model, "claude-sonnet-5");
     assert.equal(parseArgs(["book.json", "--model", "haiku"]).model, "claude-haiku-4-5");
     assert.equal(parseArgs(["book.json", "--model", "claude-opus-4-8"]).model, "claude-opus-4-8");
   });

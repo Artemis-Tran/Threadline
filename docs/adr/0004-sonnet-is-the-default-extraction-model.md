@@ -1,5 +1,12 @@
 # Sonnet is the default extraction model
 
+> **Superseded by [ADR-0009](0009-luna-is-the-default-extraction-model.md).**
+> The default is now Luna, on a 12–15× price advantage and not on a quality
+> finding. What this ADR established about the *failure mode* of a cheap model
+> on this task — roster noise, walk-ons promoted, one person fragmented across
+> entries — is not superseded and is still the thing to watch for. Only the
+> conclusion about which model a no-flag run uses is.
+
 Extraction runs on a configurable model, and we default to Sonnet. A
 head-to-head run of the same book showed Haiku costs roughly a seventh as much
 but produces a noisier thread — it promotes unnamed background walk-ons to

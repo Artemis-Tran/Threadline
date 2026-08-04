@@ -9,8 +9,9 @@ Threadline is a two-part prototype:
 1. An **offline extraction pipeline** (Node + TypeScript) that turns an EPUB
    into a "thread" — a structured JSON file describing a book's characters,
    relationships, and plot events. Threads are precomputed offline by parsing
-   an EPUB into chapter text, sending chapters to the Claude API for
-   extraction, and merging the per-chapter results.
+   an EPUB into chapter text, sending chapters to an LLM API (OpenAI or
+   Anthropic, your choice per run) for extraction, and merging the per-chapter
+   results.
 2. A **static wiki web app** (`web/` — Vite + React, no server) that imports a
    thread JSON and turns it into a browsable, spoiler-gated mini-wiki. The
    centerpiece is a **chapter cap** — "show me the world as of chapter N" — so
@@ -43,17 +44,24 @@ library will already contain the example book — click it to explore.
 
 ## Generating a thread from your own EPUB
 
-This is the part that costs money — the extract step makes real Claude API
-calls (roughly **$0.20–$2 per book** depending on model choice). It shows a
-cost estimate and asks for confirmation before spending anything.
+This is the part that costs money — the extract step makes real API calls
+(roughly **$0.25 per book** on the default model, and up to **$4–7** on the
+priciest). It shows a cost estimate and asks for confirmation before spending
+anything.
 
 ### 1. Set up your API key
 
-Create a `.env` file in the project root:
+Extraction defaults to `gpt-5.6-luna`, an OpenAI model, so **a run with no
+`--model` flag needs an OpenAI key**. Create a `.env` file in the project root:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 ```
+
+Running an Anthropic model instead (`--model sonnet`, `haiku`, `opus`) needs
+`ANTHROPIC_API_KEY` and not the OpenAI one — only the key for the vendor you
+are actually calling. If it is missing, the run stops before spending anything
+and names the variable it wanted.
 
 `.env` is gitignored and must never be committed.
 
@@ -112,17 +120,21 @@ second one never overwrites the first, and readable by `compare-extractions`.
 A repeat probe on the same chapter re-extracts — the confirmation prompt is
 what stops you paying twice by accident.
 
-**Trying a cheaper model.** Extraction defaults to `claude-sonnet-5`, but any
+**Trying another model.** Extraction defaults to `gpt-5.6-luna`, but any
 command that hits the API takes `--model <id>` (a full id, or the shorthands
-`sonnet` / `haiku` / `opus`); each model is priced correctly in the cost
-estimate. Cheaper models (e.g. Haiku) cut cost several-fold but tend to
-produce noisier, less consistent rosters — so A/B before switching. Extract a
-candidate into a separate directory (so it doesn't overwrite your baseline)
-and diff the two:
+`luna` / `terra` / `sonnet` / `haiku` / `opus`); each model is priced correctly
+in the cost estimate. Luna is the default on price — roughly 15× cheaper than
+Sonnet — rather than on a measured quality win, and the quality comparison
+between them is genuinely open (ADR-0009). What a cheap model tends to get wrong
+here is the roster — promoting unnamed walk-ons to characters, or splitting one
+person across several entries — so if a thread comes out noisy that is the thing
+to look at, and switching costs one flag. A/B before committing to one: extract a
+candidate into a separate directory (so it doesn't overwrite your baseline) and
+diff the two:
 
 ```
-npm run extract-book -- output/your-book-parsed.json --model haiku --out-dir output/your-book-chunks-haiku
-npm run compare-extractions -- output/your-book-chunks output/your-book-chunks-haiku --label-a sonnet --label-b haiku
+npm run extract-book -- output/your-book-parsed.json --model sonnet --out-dir output/your-book-chunks-sonnet
+npm run compare-extractions -- output/your-book-chunks output/your-book-chunks-sonnet --label-a luna --label-b sonnet
 ```
 
 The comparison reports per-chapter counts, roster differences, and each run's
@@ -204,4 +216,5 @@ Actions" in the repo settings is a one-time manual step outside the repo.
 - `/tests` — pipeline `node:test` suite (`web/tests` for the web suite)
 - `/input` — sample EPUB files (gitignored)
 - `/output` — generated JSON (gitignored)
-- `.env` — `ANTHROPIC_API_KEY` (gitignored, never committed)
+- `.env` — `OPENAI_API_KEY` (the default model's vendor) and/or
+  `ANTHROPIC_API_KEY` (gitignored, never committed)

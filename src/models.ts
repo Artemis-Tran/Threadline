@@ -36,9 +36,11 @@ interface ModelRow {
 // Standard list prices (USD per million tokens). Sonnet is kept at $3/$15 —
 // the pipeline's prior hardcoded rate — rather than the promotional $2/$10:
 // for a cost *gate*, over-estimating is the safe direction, and it keeps a
-// no-flag run's estimate byte-identical to before this flag existed. That also
-// means Terra is not cheaper than Sonnet on the promotional rate; it earns its
-// row as the fallback if Luna proves too noisy, not as a saving.
+// `--model sonnet` run's estimate byte-identical to what the hardcoded rate
+// quoted. (That was a no-flag run's estimate until the default moved to Luna;
+// the rate is unchanged either way.) That also means Terra is not cheaper than
+// Sonnet on the promotional rate; it earns its row as the fallback if Luna
+// proves too noisy, not as a saving.
 //
 // The Anthropic rows carry 2000 output tokens because that is the figure the
 // extract step's gate hardcoded before this field existed.
@@ -102,7 +104,13 @@ const ALIASES: Record<string, string> = {
   terra: "gpt-5.6-terra",
 };
 
-export const DEFAULT_MODEL = "claude-sonnet-5";
+// What a no-flag run extracts on. Luna, on a 12–15× price advantage over
+// Sonnet and not on a quality finding — every Sonnet-versus-Luna comparison to
+// date predates the character-inclusion rule, so the quality question is open
+// (ADR-0009, superseding ADR-0004). Changing this line is the whole of a
+// reversal's *behaviour*, and it is meant to stay that cheap — no caller
+// hardcodes a model, so nothing else has to move but the prose that cites it.
+export const DEFAULT_MODEL = "gpt-5.6-luna";
 
 // Resolve a --model value (alias or full ID) to a priced model. Throws with the
 // accepted names if it isn't in the registry, so an unpriced/misspelled model

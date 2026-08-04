@@ -36,7 +36,8 @@ describe("resolveModel", () => {
 
   test("carries an output-token estimate for the cost gate", () => {
     // Pinned for the Anthropic rows because the extract step's gate used to hardcode
-    // 2000 — a no-flag estimate has to come out unchanged.
+    // 2000 — a `--model sonnet` estimate has to come out unchanged. (That was the
+    // no-flag estimate until the default moved to Luna; the figure is unchanged.)
     assert.equal(resolveModel("sonnet").outputTokenEstimate, 2000);
     assert.equal(resolveModel("haiku").outputTokenEstimate, 2000);
     assert.equal(resolveModel("opus").outputTokenEstimate, 2000);
@@ -61,5 +62,23 @@ describe("resolveModel", () => {
 
   test("DEFAULT_MODEL is a resolvable ID", () => {
     assert.equal(resolveModel(DEFAULT_MODEL).id, DEFAULT_MODEL);
+  });
+
+  test("defaults to Luna, on the OpenAI row a no-flag run needs a key for", () => {
+    // A price decision, not a quality finding (ADR-0009). The provider half is
+    // the one with teeth: the default moving vendors is what changed which
+    // credential a no-flag run demands, so it is asserted rather than implied.
+    const model = resolveModel(DEFAULT_MODEL);
+    assert.equal(model.id, "gpt-5.6-luna");
+    assert.equal(model.provider, "openai");
+  });
+
+  test("keeps Sonnet a resolvable non-default after the default moved", () => {
+    // ADR-0009 expects to be re-measured and possibly reversed, so switching
+    // back has to stay one flag. Nothing left the allowlist when the default
+    // did — asserted as "reachable and not the default", which is the state a
+    // botched reversal or a tidied-up allowlist would break.
+    assert.equal(resolveModel("claude-sonnet-5").id, "claude-sonnet-5");
+    assert.notEqual(resolveModel("sonnet").id, DEFAULT_MODEL);
   });
 });

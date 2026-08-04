@@ -12,7 +12,9 @@ import { probeArgs, probeDir } from "../src/extract-chapter";
 const PARSED = "output/the-potters-path-parsed.json";
 
 // Every probe forwards the same window/force/model trio; only the tail varies.
-function expectedFor(index: string, model = "claude-sonnet-5", tail: string[] = []): string[] {
+// The default here is the registry's default, which moved to Luna with ADR-0009
+// — a probe follows the default so that what you probe is what a book run does.
+function expectedFor(index: string, model = "gpt-5.6-luna", tail: string[] = []): string[] {
   return [
     PARSED,
     "--from", index,
@@ -47,25 +49,27 @@ describe("probeArgs", () => {
   });
 
   test("writes into a probe directory keyed by model, never a book's run directory", () => {
-    const sonnet = probeArgs([PARSED, "8"]);
+    const defaulted = probeArgs([PARSED, "8"]);
     const haiku = probeArgs([PARSED, "8", "--model", "haiku"]);
     const dirOf = (args: string[]) => args[args.indexOf("--out-dir") + 1];
-    assert.notEqual(dirOf(sonnet), dirOf(haiku));
-    assert.match(path.basename(dirOf(sonnet)), /^the-potters-path-probe-claude-sonnet-5$/);
+    assert.notEqual(dirOf(defaulted), dirOf(haiku));
+    assert.match(path.basename(dirOf(defaulted)), /^the-potters-path-probe-gpt-5\.6-luna$/);
     assert.match(path.basename(dirOf(haiku)), /^the-potters-path-probe-claude-haiku-4-5$/);
     // The real run directory for this book, which a probe must never touch.
-    assert.notEqual(path.basename(dirOf(sonnet)), "the-potters-path-chunks");
+    assert.notEqual(path.basename(dirOf(defaulted)), "the-potters-path-chunks");
   });
 
   test("resolves --model to a registry ID and forwards it", () => {
     assert.deepEqual(probeArgs([PARSED, "8", "--model", "haiku"]), expectedFor("8", "claude-haiku-4-5"));
-    assert.deepEqual(probeArgs([PARSED, "--model", "luna", "8"]), expectedFor("8", "gpt-5.6-luna"));
+    // Sonnet rather than Luna, so the flag is doing the work: Luna is now the
+    // default, and a probe asking for it proves nothing about --model.
+    assert.deepEqual(probeArgs([PARSED, "--model", "sonnet", "8"]), expectedFor("8", "claude-sonnet-5"));
   });
 
   test("forwards --roster unchanged", () => {
     assert.deepEqual(
       probeArgs([PARSED, "8", "--roster", "probe-roster.json"]),
-      expectedFor("8", "claude-sonnet-5", ["--roster", "probe-roster.json"])
+      expectedFor("8", "gpt-5.6-luna", ["--roster", "probe-roster.json"])
     );
   });
 

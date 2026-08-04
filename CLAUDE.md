@@ -56,7 +56,7 @@ npm run build -w web          # → web/dist
 ```
 
 Notable flags: `--model <id>` on the extraction commands (default
-`claude-sonnet-5`; shorthands `sonnet`/`haiku`/`opus`/`luna`/`terra`),
+`gpt-5.6-luna`; shorthands `sonnet`/`haiku`/`opus`/`luna`/`terra`),
 `--list`, `--out-dir <path>` and `--roster <path>` on `extract-book`, and
 `--progression-order <path>` on `merge-thread`.
 
@@ -85,10 +85,15 @@ which vendor serves a row. An unpriced or misspelled model is rejected before
 any API call, and reusing one model's cached extracts under a different
 `--model` fails closed.
 
-`luna`/`terra` are OpenAI GPT-5.6 rows and are runnable: `extract-book` goes
+`luna`/`terra` are OpenAI GPT-5.6 rows: `extract-book` goes
 through `src/extraction-call.ts`, which owns both vendors' request shapes, so
-the probe and a book run both reach OpenAI. Neither is a default; Sonnet still
-is (ADR-0004). Luna has now been measured across whole books at three reasoning
+the probe and a book run both reach OpenAI. **Luna is the default (ADR-0009)**,
+so a no-flag run needs `OPENAI_API_KEY` rather than `ANTHROPIC_API_KEY`; Terra
+is not a default and is the fallback row if Luna proves too noisy. The switch is
+a 12–15× price decision — $0.25 a book against Sonnet's $3.95 — with the quality
+question left open, because every Sonnet-versus-Luna comparison predates the
+character-inclusion rule. Don't cite it as a quality finding, and treat reversing
+it as routine. Luna has been measured across whole books at three reasoning
 efforts, and no effort makes it clean — low fuses distinct characters into one
 entry, high and max split one across two (ADR-0008). Reasoning effort is pinned
 in the seam at `high` rather than exposed as a flag, so the registry's output
@@ -134,10 +139,13 @@ moving the OpenAI rows' `outputTokenEstimate` in the same change (ADR-0008).
   extract*, but the directory is `{slug}-chunks/`, the files are
   `idx###-extract.json`, and the code says `checkpoint`. Don't rename them —
   the churn isn't worth it. Just don't spread "chunk" into new code or docs.
-- Cost awareness: extraction costs real money per book. Test on one chapter
-  before a whole book, and one book before a batch. Sonnet is the default and
-  the recommendation (ADR-0004) — don't reach for Opus without a specific
-  reasoning failure Sonnet can't handle.
+- Cost awareness: extraction costs real money per book, though a default run is
+  now around $0.25 rather than several dollars (ADR-0009). Still test on one
+  chapter before a whole book, and one book before a batch — the habit is about
+  whether the output is right, not only whether the run is affordable. Luna is
+  the default and the recommendation; Sonnet is one flag away and roughly 15×
+  the price, and don't reach for Opus without a specific reasoning failure the
+  default can't handle.
 - `web/` may only `import type` from `@pipeline/types`; never value imports
   (ADR-0003). The pipeline never imports from `web/`.
 - Progression-order regression detection is regex-based with no subject
@@ -147,8 +155,10 @@ moving the OpenAI rows' `outputTokenEstimate` in the same change (ADR-0008).
 
 ## Guardrails
 
-- Don't call the Anthropic API in bulk — looping over many chapters or many
-  books — without confirming first. That's where real money gets spent.
+- Don't call a vendor API in bulk — looping over many chapters or many books —
+  without confirming first. That's where real money gets spent. Written as
+  "the Anthropic API" until the default moved to an OpenAI row (ADR-0009); the
+  guardrail was never about which vendor.
 - If output looks broken (empty, malformed JSON, suspiciously short chapter
   text), stop and flag it rather than running the next step on bad data.
 - Off-limits everywhere: authentication, any server or backend (static client

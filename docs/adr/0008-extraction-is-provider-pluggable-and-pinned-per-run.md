@@ -152,8 +152,8 @@ This is one chapter, and it settles the question it was run to settle rather
 than the general one. It shows medium buying nothing on a chapter where low
 already succeeds; it does not show that no chapter exists where deliberation
 would help. Reopening this means new measurement, not a re-run of the original
-argument. ADR-0004's conclusion is untouched either way: Sonnet is still the
-default.
+argument. ADR-0004's conclusion is untouched either way — it was still the
+default when this was written; ADR-0009 has since moved it to Luna on price.
 
 ### The measurement came, and the probe had been asking the wrong chapter
 
@@ -198,8 +198,16 @@ distinct people into one entry; high and max split one person across two. ADR-00
 names both as the cheap-model failure on this task, and Luna picks one or the
 other depending on effort rather than escaping the pair. High's fragmentation is
 arguably the worse of the two: Greaves is a 24-chapter principal, where
-Pelham and Martha are minor. Sonnet exhibits neither at any point. ADR-0004's
-default is not merely untouched by this; it is reinforced.
+Pelham and Martha are minor. Sonnet exhibits neither at any point.
+
+That last sentence read as reinforcing ADR-0004's default when it was written,
+and ADR-0009 has since moved the default to Luna anyway. The two are not in
+conflict: this is a defect Luna has and Sonnet was not observed to have, on
+extractions taken before the character-inclusion rule existed, and ADR-0009
+switches on price while stating that the quality comparison cannot carry weight.
+Sonnet's own splitting — `Marcus` / `Marcus the apprentice` / `Marcus Ashford` —
+is the same defect, unquantified on both sides. "Sonnet exhibits neither at any
+point" is what was seen on one book, not a measured rate.
 
 ### Max effort is operationally unusable at the current token ceiling
 
