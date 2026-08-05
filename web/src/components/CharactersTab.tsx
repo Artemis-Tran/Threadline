@@ -4,21 +4,40 @@ import styles from "./CharactersTab.module.css";
 
 export default function CharactersTab({
   characters,
+  query,
   onSelect,
   chapterLabel,
 }: {
   characters: CharacterView[];
+  query: string;
   onSelect: (id: string) => void;
   chapterLabel: (index: number) => string;
 }) {
+  // The tab is handed the cap-filtered list and narrows it itself, so the two
+  // empty states below stay distinguishable. Filtering in the caller collapses
+  // them: a query that matches nothing arrives here as an empty list and reads
+  // as "you haven't got this far in the book yet".
+  const q = query.trim().toLowerCase();
+  const matches = q
+    ? characters.filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          c.description.toLowerCase().includes(q) ||
+          c.aliases.some((a) => a.toLowerCase().includes(q))
+      )
+    : characters;
+
   if (characters.length === 0) {
     return <p className={styles.empty}>No characters known yet at this point in the book.</p>;
+  }
+  if (matches.length === 0) {
+    return <p className={styles.empty}>No characters match “{query.trim()}”.</p>;
   }
 
   return (
     <div className={styles.groups}>
       {ROLE_ORDER.map((role) => {
-        const inRole = characters.filter((c) => c.role === role);
+        const inRole = matches.filter((c) => c.role === role);
         if (inRole.length === 0) return null;
         return (
           <details key={role} className={styles.group} open>

@@ -253,17 +253,6 @@ export default function BookPage() {
     [ready, cap]
   );
 
-  const characters = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return listedCharacters;
-    return listedCharacters.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.description.toLowerCase().includes(q) ||
-        c.aliases.some((a) => a.toLowerCase().includes(q))
-    );
-  }, [listedCharacters, query]);
-
   // Graph inputs: canonical spoiler-safe identity for every character visible
   // at the cap (unfiltered — the search box must not shrink the graph), plus
   // the cap-filtered edge list.
@@ -419,7 +408,12 @@ export default function BookPage() {
           pure display flip — remounting the big subtrees caused a visible
           flicker, and this also preserves collapse state across switches. */}
       <div hidden={character !== null || tab !== "characters"}>
-        <CharactersTab characters={characters} onSelect={selectCharacter} chapterLabel={chapterLabel} />
+        <CharactersTab
+          characters={listedCharacters}
+          query={query}
+          onSelect={selectCharacter}
+          chapterLabel={chapterLabel}
+        />
       </div>
       <div hidden={character !== null || tab !== "timeline"}>
         <TimelineTab
