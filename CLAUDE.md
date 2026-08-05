@@ -116,6 +116,17 @@ moving the OpenAI rows' `outputTokenEstimate` in the same change (ADR-0008).
   (`@testing-library/react` + `user-event`); `web/tests/setup.ts` unmounts
   between tests, because Testing Library only self-registers that when
   vitest's globals are on.
+- **Never pass a rendered DOM node to `assert.equal`/`deepEqual`.** Assert
+  absence as `assert.ok(!screen.queryByText(...))`, not
+  `assert.equal(screen.queryByText(...), null)`. On failure node's
+  `AssertionError` inspects the actual value at `depth: 1000` with
+  `getters: true`, which walks the DOM, the React fiber graph and `window` —
+  22 MB and 420k lines for one character card — then diffs those lines against
+  the expected value. Memory then climbs about 1 GB/s with no ceiling and takes
+  the machine down; a node heap cap does not contain it. This is a live hazard
+  for any component test, because a red TDD step is exactly when the assertion
+  fails. `assert.ok(screen.getByText(...))` is safe: `getByText` throws its own
+  bounded error first.
 
 ## Project structure
 
