@@ -148,6 +148,17 @@ moving the OpenAI rows' `outputTokenEstimate` in the same change (ADR-0008).
   default can't handle.
 - `web/` may only `import type` from `@pipeline/types`; never value imports
   (ADR-0003). The pipeline never imports from `web/`.
+- **What counts as a character is a domain decision, not a prompt detail.**
+  `CONTEXT.md` defines *character* and *group*; ADR-0010 records the inclusion
+  rule — what qualifies, what is suppressed, what is tagged, and what each of
+  those cost. Read it before editing `buildSystemPrompt`. Two things it makes
+  binding: incidentals are suppressed at the prompt rather than tagged, so
+  moving that line means re-extracting every book at full price; and collectives
+  are kept and tagged rather than dropped, because merge deletes any
+  relationship with an unresolved endpoint. The character count is an output,
+  never an acceptance target — "match Sonnet's number" was considered and
+  rejected. The rule is known to be incompletely enforced (ADR-0010 names the
+  surviving class and why prose won't fix it).
 - Progression-order regression detection is regex-based with no subject
   attribution, so it produces occasional false positives — a description that
   mentions another character's rank can be flagged against the wrong person.

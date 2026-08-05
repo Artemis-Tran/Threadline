@@ -125,10 +125,13 @@ command that hits the API takes `--model <id>` (a full id, or the shorthands
 `luna` / `terra` / `sonnet` / `haiku` / `opus`); each model is priced correctly
 in the cost estimate. Luna is the default on price — roughly 15× cheaper than
 Sonnet — rather than on a measured quality win, and the quality comparison
-between them is genuinely open (ADR-0009). What a cheap model tends to get wrong
+between them is genuinely open (ADR-0009). What extraction tends to get wrong
 here is the roster — promoting unnamed walk-ons to characters, or splitting one
-person across several entries — so if a thread comes out noisy that is the thing
-to look at, and switching costs one flag. A/B before committing to one: extract a
+person across several entries. Neither is a cheap-model failing: both vendors do
+both, so the walk-on half is addressed by the character definition in the prompt
+rather than by model choice — imperfectly, and ADR-0010 records where that rule
+still leaks. So if a thread comes out noisy that is the thing to look at, and
+switching costs one flag. A/B before committing to one: extract a
 candidate into a separate directory (so it doesn't overwrite your baseline) and
 diff the two:
 

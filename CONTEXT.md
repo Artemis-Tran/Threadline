@@ -45,6 +45,22 @@ The merged, deduplicated whole-book result: one entry per character,
 relationship, and event, each carrying its per-chapter history.
 _Avoid_: skin
 
+**Character**:
+An entity the story treats as an actor, referred to by a stable designator — a
+name, or a standing title a later chapter could use again. Personhood is not
+required: a god, a beast, a ship, or a system is a character if the story gives
+it agency. An entity the chapter identifies only by where it stood or what it
+did once is not one.
+_Note_: The rule that decides the boundary, and what it costs, is
+[ADR-0010](docs/adr/0010-what-counts-as-a-character.md).
+
+**Group**:
+A character that stands for more than one entity acting together — a council, a
+crew, a household, an order, a business. Carried on the thread as
+`kind: "collective"`, which is the only name the code and the ADRs use for it.
+_Note_: The concept is recorded, not built — the tag is its documented
+destination. Groups are kept out of the wiki's characters list until it exists.
+
 **Appearance**:
 How one chapter described one character. A character's appearances are the
 evidence the thread is built from; the character's top-level description is
